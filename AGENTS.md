@@ -1,51 +1,57 @@
 # claude-statusline
 
-Кастомний статуслайн для Claude Code: `scripts/statusline.sh` малює головний статуслайн (`statusLine`), `scripts/subagent-statusline.sh` - рядки панелі агентів (`subagentStatusLine`).
+Custom status line for Claude Code: `scripts/statusline.sh` renders the main status line (`statusLine`), `scripts/subagent-statusline.sh` renders the agent panel rows (`subagentStatusLine`).
 
-## Файли
+## Files
 
-| Файл | Що це |
+| File | What it is |
 |---|---|
-| `scripts/statusline.sh` | Головний статуслайн. POSIX `sh` + `jq` + `awk`, запускається через `bash` |
-| `scripts/subagent-statusline.sh` | Рядки панелі агентів, ті самі залежності |
-| `install.sh` | Інсталятор: кладе обидва скрипти в `~/.claude/` і прописує обидва ключі в `settings.json` через `jq` |
-| `README.md` | Документація англійською |
+| `scripts/statusline.sh` | Main status line. POSIX `sh` + `jq` + `awk`, run via `bash` |
+| `scripts/subagent-statusline.sh` | Agent panel rows, same dependencies |
+| `install.sh` | Installer: puts both scripts into `~/.claude/` and sets both keys in `settings.json` via `jq` |
+| `README.md` | User-facing documentation |
 
-## Як працює
+## How it works
 
-- `scripts/statusline.sh` отримує payload головного статуслайну й виводить кілька рядків з ANSI-кольорами.
-- `scripts/subagent-statusline.sh` отримує payload з `tasks[]` і на кожне завдання виводить JSON-рядок `{"id": ..., "content": ...}`. Для не-`running` завдань `content` порожній, і рядок ховається.
+- `scripts/statusline.sh` receives the main status line payload and prints several lines with ANSI colors.
+- `scripts/subagent-statusline.sh` receives a payload with `tasks[]` and prints one JSON line `{"id": ..., "content": ...}` per task. For tasks that are not `running`, `content` is empty and the row is hidden.
 
-Нюанси головного статуслайну:
+Main status line details:
 
-- Рядки `sess` / `week` малюються лише коли є `rate_limits` (підписки Pro/Max). На Enterprise/Team їх немає, і замість них показується `usage:` з часом до 1-го числа (00:00 UTC). Якщо є `~/.claude/usage-cache.json` (його пише опційний `~/.claude/usage-fetch.js`, якого в репо немає), то показується шкала `used:` з витратами за місяць.
+- The `sess` / `week` lines are drawn only when `rate_limits` is present (Pro/Max subscriptions). Enterprise/Team payloads have none, so a `usage:` line with the time until the 1st of the month (00:00 UTC) is shown instead. If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-fetch.js`, which is not in this repo), a `used:` bar with the monthly spend is shown.
 
-Нюанси панелі агентів:
+Agent panel details:
 
-- Поля з `jq` розділяються `\037`, а не табом. `read` склеює підряд кілька табів, і порожні поля (наприклад, відсутній `model`) зсуваються.
-- Вартості в payload немає. Її рахує `jq` з `usage` у транскрипті агента (`<session>/subagents/agent-<id>.jsonl`), з дедуплікацією за `message.id`. Таблиця цін (`def price`) жорстко прописана й береться з https://platform.claude.com/docs/en/about-claude/pricing. Оновлюй її, коли виходять нові моделі чи змінюються ціни.
-- Кольори токенів ті самі, що в рядку `cntx`: зелений до 50%, жовтий від 50%, червоний від 80% від `contextWindowSize` агента.
-- Фонові shell'и в payload не потрапляють, показати їх рядками неможливо.
+- Fields from `jq` are separated by `\037`, not a tab. `read` collapses consecutive tabs, so empty fields (for example, a missing `model`) shift.
+- The payload has no cost. `jq` computes it from `usage` in the agent transcript (`<session>/subagents/agent-<id>.jsonl`), deduplicated by `message.id`. The price table (`def price`) is hardcoded from https://platform.claude.com/docs/en/about-claude/pricing. Update it when new models ship or prices change.
+- Token colors follow the `cntx` line: green below 50%, yellow from 50%, red from 80% of the agent's `contextWindowSize`.
+- Background shells are not part of the payload, so they cannot be shown as rows.
+- Payload fields: `tasks[]` with `id`, `type`, `status`, `description`, `label`, `startTime`, `model`, `contextWindowSize`, `tokenCount`, `tokenSamples`, `cwd`; top level has `transcript_path`, `columns`, `session_id`. Older versions may omit `model`, in which case the model is read from the agent transcript. When only a background shell is running, the script is not called at all.
+- The maximum number of rows the panel shows is undocumented.
 
-## Кольори
+## Colors
 
-Тримай узгодженими з головним статуслайном:
+Keep them consistent with the main status line:
 
-- модель - `\033[0;35m` (пурпуровий);
-- вартість - `\033[0;36m` (бірюзовий);
-- підписи й допоміжний текст (`cntx:`, `tok`) - `\033[0;90m` (сірий).
+- model - `\033[0;35m` (magenta);
+- cost - `\033[0;36m` (cyan);
+- labels and secondary text (`cntx:`, `tok`) - `\033[0;90m` (gray).
 
-## Інсталяція
+## Installation
 
-Репозиторій публічний: `install.sh` тягне raw-файли з `raw.githubusercontent.com` без токена. Якщо скрипт запущено з клону (поруч лежить `scripts/statusline.sh`), файли копіюються локально без мережі. Перед перезаписом робляться `.bak` для обох скриптів і `settings.json`. Новий файл для встановлення додавай у `FILES` в `install.sh` (файли беруться з `scripts/`).
+The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`).
 
-## Перевірка змін
+`install.sh` stays in the repo root and the scripts stay in `scripts/`: the public command `curl -fsSL .../main/install.sh | sh` and the raw paths `scripts/<file>` are already in use on other machines, so renaming or moving them breaks installation.
 
-Мінімальний smoke-тест обох режимів:
+## Verifying changes
+
+Minimal smoke test for both scripts:
 
 ```sh
 echo '{"cwd":"/tmp","model":{"display_name":"Opus"}}' | bash scripts/statusline.sh
 echo '{"transcript_path":"/nonexistent.jsonl","tasks":[{"id":"x","status":"running","label":"test","tokenCount":7981,"model":"claude-sonnet-5-5","contextWindowSize":1000000}]}' | bash scripts/subagent-statusline.sh
 ```
 
-Після правок у репо онови встановлену копію: `sh install.sh`.
+After changes in the repo, update the installed copy: `sh install.sh`.
+
+To check the panel live, run several background test agents (general-purpose). The harness blocks a standalone foreground `sleep`, so use `ping -c N 127.0.0.1 > /dev/null` for pauses. Explore and Plan agents are read-only and refuse commands with redirects.

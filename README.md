@@ -15,21 +15,8 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 
 ## Install
 
-The repo is private, so the raw files need a GitHub token. With the [GitHub CLI](https://cli.github.com) logged in:
-
 ```sh
-curl -fsSL -H "Authorization: token $(gh auth token)" \
-  https://raw.githubusercontent.com/ihororlovskyi/claude-statusline/main/install.sh | sh
-```
-
-Without `gh`, export `GITHUB_TOKEN` (a token with read access to the repo) and use it in the header instead.
-
-If `gh` has several accounts and the active one has no access to the repo (curl fails with 404), pick the account explicitly and pass the same token to the installer:
-
-```sh
-token=$(gh auth token --user ihororlovskyi)
-curl -fsSL -H "Authorization: token $token" \
-  https://raw.githubusercontent.com/ihororlovskyi/claude-statusline/main/install.sh | GITHUB_TOKEN=$token sh
+curl -fsSL https://raw.githubusercontent.com/ihororlovskyi/claude-statusline/main/install.sh | sh
 ```
 
 From a local clone:

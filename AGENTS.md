@@ -1,23 +1,26 @@
 # claude-statusline
 
-Кастомний статуслайн для Claude Code. Один скрипт `statusline.sh` обслуговує і головний статуслайн (`statusLine`), і рядки панелі агентів (`subagentStatusLine`).
+Кастомний статуслайн для Claude Code: `scripts/statusline.sh` малює головний статуслайн (`statusLine`), `scripts/subagent-statusline.sh` - рядки панелі агентів (`subagentStatusLine`).
 
 ## Файли
 
 | Файл | Що це |
 |---|---|
-| `statusline.sh` | Сам статуслайн. POSIX `sh` + `jq` + `awk`, запускається через `bash` |
-| `install.sh` | Інсталятор: кладе скрипт у `~/.claude/` і прописує обидва ключі в `settings.json` через `jq` |
+| `scripts/statusline.sh` | Головний статуслайн. POSIX `sh` + `jq` + `awk`, запускається через `bash` |
+| `scripts/subagent-statusline.sh` | Рядки панелі агентів, ті самі залежності |
+| `install.sh` | Інсталятор: кладе обидва скрипти в `~/.claude/` і прописує обидва ключі в `settings.json` через `jq` |
 | `README.md` | Документація англійською |
 
-## Як працює `statusline.sh`
+## Як працює
 
-Режим визначається за stdin:
+- `scripts/statusline.sh` отримує payload головного статуслайну й виводить кілька рядків з ANSI-кольорами.
+- `scripts/subagent-statusline.sh` отримує payload з `tasks[]` і на кожне завдання виводить JSON-рядок `{"id": ..., "content": ...}`. Для не-`running` завдань `content` порожній, і рядок ховається.
 
-- **є `.tasks`** - payload панелі агентів. На кожне завдання виводиться JSON-рядок `{"id": ..., "content": ...}`. Для не-`running` завдань `content` порожній, і рядок ховається.
-- **інакше** - payload головного статуслайну, багаторядковий вивід з ANSI-кольорами.
+Нюанси головного статуслайну:
 
-Важливі нюанси панелі агентів:
+- Рядки `sess` / `week` малюються лише коли є `rate_limits` (підписки Pro/Max). На Enterprise/Team їх немає, і замість них показується `usage:` з часом до 1-го числа (00:00 UTC). Якщо є `~/.claude/usage-cache.json` (його пише опційний `~/.claude/usage-fetch.js`, якого в репо немає), то показується шкала `used:` з витратами за місяць.
+
+Нюанси панелі агентів:
 
 - Поля з `jq` розділяються `\037`, а не табом. `read` склеює підряд кілька табів, і порожні поля (наприклад, відсутній `model`) зсуваються.
 - Вартості в payload немає. Її рахує `jq` з `usage` у транскрипті агента (`<session>/subagents/agent-<id>.jsonl`), з дедуплікацією за `message.id`. Таблиця цін (`def price`) жорстко прописана й береться з https://platform.claude.com/docs/en/about-claude/pricing. Оновлюй її, коли виходять нові моделі чи змінюються ціни.
@@ -34,15 +37,15 @@
 
 ## Інсталяція
 
-Репозиторій приватний, тому `install.sh` тягне raw-файли з токеном (`GITHUB_TOKEN` або `gh auth token`). Якщо поруч з `install.sh` лежить `statusline.sh` (запуск з клону), скрипт копіює локальний файл без мережі. Перед перезаписом робляться `.bak` для `statusline.sh` і `settings.json`.
+Репозиторій приватний, тому `install.sh` тягне raw-файли з токеном (`GITHUB_TOKEN` або `gh auth token`). Якщо скрипт запущено з клону (поруч лежить `scripts/statusline.sh`), файли копіюються локально без мережі. Перед перезаписом робляться `.bak` для обох скриптів і `settings.json`. Новий файл для встановлення додавай у `FILES` в `install.sh` (файли беруться з `scripts/`).
 
 ## Перевірка змін
 
 Мінімальний smoke-тест обох режимів:
 
 ```sh
-echo '{"cwd":"/tmp","model":{"display_name":"Opus"}}' | bash statusline.sh
-echo '{"transcript_path":"/nonexistent.jsonl","tasks":[{"id":"x","status":"running","label":"test","tokenCount":7981,"model":"claude-sonnet-5-5","contextWindowSize":1000000}]}' | bash statusline.sh
+echo '{"cwd":"/tmp","model":{"display_name":"Opus"}}' | bash scripts/statusline.sh
+echo '{"transcript_path":"/nonexistent.jsonl","tasks":[{"id":"x","status":"running","label":"test","tokenCount":7981,"model":"claude-sonnet-5-5","contextWindowSize":1000000}]}' | bash scripts/subagent-statusline.sh
 ```
 
 Після правок у репо онови встановлену копію: `sh install.sh`.

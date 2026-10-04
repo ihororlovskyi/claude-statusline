@@ -37,7 +37,8 @@ done
 
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 cp "$SETTINGS" "$SETTINGS.bak"
-dir_ref="$CLAUDE_DIR"
+# custom dirs are single-quoted so spaces and shell metacharacters survive in the command
+dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
 [ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
 jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
   '.statusLine = {type: "command", command: $main}

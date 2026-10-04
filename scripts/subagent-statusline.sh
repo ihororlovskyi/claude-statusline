@@ -4,8 +4,9 @@ input=$(cat)
 
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 subagents_dir="${transcript%.jsonl}/subagents"
-echo "$input" | jq -r '.tasks[] | [.id, (.status // ""), (.label // .description // ""), ((.tokenCount // 0) | tostring), (.model // ""), ((.contextWindowSize // 0) | tostring)] | join("\u001f")' |
-# \037 instead of tab: read collapses consecutive tabs, shifting empty fields
+echo "$input" | jq -r '.tasks[] | [.id, (.status // ""), ((.label // .description // "") | gsub("[\n\r\u001f]"; " ")), ((.tokenCount // 0) | tostring), (.model // ""), ((.contextWindowSize // 0) | tostring)] | join("\u001f")' |
+# \037 instead of tab: read collapses consecutive tabs, shifting empty fields;
+# newlines and \037 in the label are flattened so one task stays one record
 while IFS="$(printf '\037')" read -r id status label tok raw ctx; do
   [ -z "$id" ] && continue
   # empty content hides finished/idle rows
@@ -50,12 +51,12 @@ while IFS="$(printf '\037')" read -r id status label tok raw ctx; do
   fi
 
   # tokens: same thresholds and colors as the main cntx line
-  tok_str=$(LC_NUMERIC=C awk -v n="$tok" -v c="$ctx" 'BEGIN {
+  tok_str=$(LC_ALL=C awk -v n="$tok" -v c="$ctx" 'BEGIN {
     pct = (c > 0 ? n * 100 / c : 0)
     col = (pct >= 80 ? "31" : (pct >= 50 ? "33" : "32"))
     printf "\033[0;%sm%d\033[0m \033[0;90mtok\033[0m", col, n
   }')
-  cost_str=$(LC_NUMERIC=C awk -v c="${cost:-0}" 'BEGIN { printf "\033[0;36m$%.2f\033[0m", c }')
+  cost_str=$(LC_ALL=C awk -v c="${cost:-0}" 'BEGIN { printf "\033[0;36m$%.2f\033[0m", c }')
 
   content="↳"
   [ -n "$model_name" ] && content="$content $(printf '\033[0;35m%s\033[0m' "$model_name")"

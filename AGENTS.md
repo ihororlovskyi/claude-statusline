@@ -6,7 +6,7 @@ Custom status line for Claude Code: `scripts/statusline.sh` renders the main sta
 
 | File | What it is |
 |---|---|
-| `scripts/statusline.sh` | Main status line. POSIX `sh` + `jq` + `awk`, run via `bash` |
+| `scripts/statusline.sh` | Main status line. `jq` + `awk`; has a `#!/bin/sh` shebang but relies on bash (`&>`) and BSD `date -v` (macOS), so always run it via `bash` |
 | `scripts/subagent-statusline.sh` | Agent panel rows, same dependencies |
 | `install.sh` | Installer: puts both scripts into `~/.claude/` and sets both keys in `settings.json` via `jq` |
 | `README.md` | User-facing documentation |
@@ -26,7 +26,7 @@ Agent panel details:
 - The payload has no cost. `jq` computes it from `usage` in the agent transcript (`<session>/subagents/agent-<id>.jsonl`), deduplicated by `message.id`. The price table (`def price`) is hardcoded from https://platform.claude.com/docs/en/about-claude/pricing. Update it when new models ship or prices change.
 - Token colors follow the `cntx` line: green below 50%, yellow from 50%, red from 80% of the agent's `contextWindowSize`.
 - Background shells are not part of the payload, so they cannot be shown as rows.
-- Payload fields: `tasks[]` with `id`, `type`, `status`, `description`, `label`, `startTime`, `model`, `contextWindowSize`, `tokenCount`, `tokenSamples`, `cwd`; top level has `transcript_path`, `columns`, `session_id`. Older versions may omit `model`, in which case the model is read from the agent transcript. When only a background shell is running, the script is not called at all.
+- Payload fields (observed October 2026): `tasks[]` with `id`, `type`, `status`, `description`, `label`, `startTime`, `model`, `contextWindowSize`, `tokenCount`, `tokenSamples`, `cwd`; top level has `transcript_path`, `columns`, `session_id`. Older versions may omit `model`, in which case the model is read from the agent transcript. When only a background shell is running, the script is not called at all.
 - The maximum number of rows the panel shows is undocumented.
 
 ## Colors

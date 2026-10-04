@@ -85,3 +85,13 @@ One row per running agent: model, tokens used, estimated cost, current activity.
 - Cost is not part of the Claude Code payload, so it is estimated from the agent transcript's `usage` and public [API pricing](https://platform.claude.com/docs/en/about-claude/pricing), including cache writes/reads, fast mode, and US-only inference. Update the price table in `scripts/subagent-statusline.sh` when pricing changes.
 
 Background shells are not passed to `subagentStatusLine`, so they cannot be shown as rows.
+
+## Skills
+
+[scripts/skills.sh](scripts/skills.sh)
+
+```bash
+sh scripts/skills.sh
+```
+
+Have fun! ;)

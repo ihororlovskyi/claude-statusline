@@ -5,8 +5,9 @@
 # is replaced with a scratch git repo on branch "feature" with an untracked file.
 # Usage: bash tests/run.sh [--update]   (--update rewrites the snapshots after an intended change)
 cd "$(dirname "$0")" || exit 1
-# fixed timezone for reset times
-export TZ=UTC
+# fixed timezone for reset times; no global or system git config (status.showUntrackedFiles=no
+# would hide the dirty mark of the scratch repo)
+export TZ=UTC GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 # the cache must be fresh and the repo has an absolute path, so both are built per run
 tmp=$(mktemp -d) || exit 1
@@ -28,8 +29,10 @@ for f in cases/*.json; do
     panel-*) script=subagent-statusline.sh ;;
     cache-*) config="$tmp/cache-config" ;;
   esac
+  # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
+  payload=$(jq -c --arg repo "$tmp/repo" 'walk(if . == "@repo@" then $repo else . end)' "$f") || exit 1
   # the rest: bar measures today's date against the billing month
-  actual=$(sed "s|@repo@|$tmp/repo|g" "$f" | CLAUDE_CONFIG_DIR="$config" bash "../scripts/$script" |
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
   expected="expected/$name.txt"
   if [ -n "$update" ]; then

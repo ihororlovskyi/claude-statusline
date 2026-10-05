@@ -12,3 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: bash tests/run.sh
+      # twice: the second run must take the backup path; a space in the dir checks the quoting
+      - name: install.sh
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude config"
+          sh install.sh
+          sh install.sh
+          jq -e '.statusLine.type == "command" and .subagentStatusLine.type == "command"' \
+            "$CLAUDE_CONFIG_DIR/settings.json"
+
+  # separate from the required snapshots job: it needs GitHub and npm, so a network
+  # hiccup must not block merges
+  skills:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sh scripts/skills.sh

@@ -5,3 +5,4 @@
 {"id":"done","content":""}
 {"id":"nofile","content":"↳ \u001b[0;35mOpus 4.8\u001b[0m  \u001b[0;31m1,234,567\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  no transcript"}
 {"id":"other","content":"↳  \u001b[0;32m0\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  unknown model"}
+{"id":"numlabel","content":"↳  \u001b[0;32m0\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  non-string label falls back to description"}

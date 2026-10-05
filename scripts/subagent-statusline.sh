@@ -59,7 +59,7 @@ while IFS="$(printf '\037')" read -r id status task; do
         + "  " + ($tok | tostring | commas | paint(if $tok >= 150000 then 31 elif $tok >= 100000 then 33 else 32 end))
         + " " + ("tok" | paint(90))
         + "  " + ("$\($cents / 100 | floor).\($cents % 100 | tostring | if length < 2 then "0" + . else . end)" | paint(36))
-        + "  " + ($t.label // $t.description // "" | gsub("[\n\r\u001f]"; " ")))}
+        + "  " + (($t.label | strings) // ($t.description | strings) // "" | gsub("[\n\r\u001f]"; " ")))}
     end' "$agent_file" 2>/dev/null
 done
 exit 0

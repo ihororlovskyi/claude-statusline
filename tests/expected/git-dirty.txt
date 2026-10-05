@@ -1,0 +1,4 @@
+[1;32m➜[0m  [0;36mrepo[0m [1;34mgit:([0;31mfeature[1;34m)[0;33m ✗[0m  [0;35mSonnet[0m
+      [0;90mthinking:[0m[0;36mon[0m[0;90m  skills: ~200 tokens (~0.1%)[0m
+      [0;90mcntx:[0m[0;32m░░░░░░░░░░[0m [0;37m5%[0m  [0;32m10,000[0m [0;90mtok /200k[0m
+      [0;90mrest: <date-dependent>

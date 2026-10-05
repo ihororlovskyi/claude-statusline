@@ -5,4 +5,5 @@
 {"id":"a4","status":"running","label":"half cent $0.125 rounds up","tokenCount":125000,"model":"claude-haiku-4-5-20251001"},
 {"id":"done","status":"completed","label":"finished row is hidden"},
 {"id":"nofile","status":"running","label":"no transcript","tokenCount":1234567,"model":"claude-opus-4-8"},
-{"id":"other","status":"running","label":"unknown model","model":"gpt-x"}]}
+{"id":"other","status":"running","label":"unknown model","model":"gpt-x"},
+{"id":"numlabel","status":"running","label":42,"description":"non-string label falls back to description"}]}

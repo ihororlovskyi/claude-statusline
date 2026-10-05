@@ -12,7 +12,7 @@ eval "$(echo "$input" | jq -r '
   "cwd="          + (.cwd | str | @sh),
   "project_dir="  + (.workspace.project_dir | str | @sh),
   "model="        + (.model.display_name | str | @sh),
-  "used="         + (.context_window.used_percentage | num | @sh),
+  "used="         + (.context_window.used_percentage | if pct != "" then tostring else "" end | @sh),
   "used_int="     + (.context_window.used_percentage | pct | @sh),
   "ctx_size="     + (.context_window.context_window_size | num | @sh),
   "ctx_tokens="   + (.context_window.current_usage | if type == "object" then [.input_tokens, .cache_creation_input_tokens, .cache_read_input_tokens] | map(select(type == "number")) | if length > 0 then add | tostring else "" end else "" end | @sh),

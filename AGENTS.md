@@ -29,8 +29,8 @@ Main status line details:
 Agent panel details:
 
 - Fields from `jq` are separated by `\037`, not a tab. `read` collapses consecutive tabs, so empty fields shift.
-- Each running row is built by a single `jq` pass over the agent transcript (model fallback, effort, cost, formatting); `fromjson?` skips a half-written last line.
-- The payload has no cost. `jq` computes it from `usage` in the agent transcript (`<session>/subagents/agent-<id>.jsonl`), deduplicated by `message.id`. The price table (`def price`) is hardcoded from https://platform.claude.com/docs/en/about-claude/pricing. Update it when new models ship or prices change.
+- Each running row is built by a single `jq` pass over the agent transcript (model fallback, effort, cost, formatting); `fromjson?` skips malformed lines (in practice a half-written last line) instead of zeroing the cost.
+- The payload has no cost. `jq` computes it from `usage` in the agent transcript (`<session>/subagents/agent-<id>.jsonl`), deduplicated by `message.id`, and rounded to cents with `jq` `round` (half up: `$0.125` shows `$0.13`, like the percentages in the main status line). The price table (`def price`) is hardcoded from https://platform.claude.com/docs/en/about-claude/pricing. Update it when new models ship or prices change.
 - The payload has no effort either. The top-level `effort` of the last `type: "assistant"` entry in the agent transcript is the effective level, read with `jq`: a plain `grep` would also match an `effort` key nested in tool input. Until the first assistant turn is written, no effort is shown. Verified October 2026 with the test agents in `.claude/agents/`:
   - the level comes from `effort:` in the agent's frontmatter, otherwise from the session; Haiku has none. The Agent tool has no effort parameter, so a different level needs a frontmatter edit (and a restart);
   - effort requested in the prompt text changes nothing in the transcript, and Haiku may refuse such a prompt as an injection;

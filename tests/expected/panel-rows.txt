@@ -1,6 +1,7 @@
 {"id":"a1","content":"↳ \u001b[0;35mOpus 5.5\u001b[0m \u001b[0;35mmedium\u001b[0m  \u001b[0;31m157,601\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.20\u001b[0m  opus with deduplicated usage"}
 {"id":"a2","content":"↳ \u001b[0;35mHaiku 4.5\u001b[0m  \u001b[0;33m100,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.06\u001b[0m  haiku with newline"}
 {"id":"a3","content":"↳ \u001b[0;35mSonnet 5.5\u001b[0m \u001b[0;35mhigh\u001b[0m  \u001b[0;32m99,999\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.21\u001b[0m  model from transcript, nested effort ignored"}
+{"id":"a4","content":"↳ \u001b[0;35mHaiku 4.5\u001b[0m  \u001b[0;33m125,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.13\u001b[0m  half cent $0.125 rounds up"}
 {"id":"done","content":""}
 {"id":"nofile","content":"↳ \u001b[0;35mOpus 4.8\u001b[0m  \u001b[0;31m1,234,567\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  no transcript"}
 {"id":"other","content":"↳  \u001b[0;32m0\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  unknown model"}

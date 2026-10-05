@@ -1,14 +1,17 @@
 #!/usr/bin/env sh
 set -e
 
-echo "npx -y skills -v" && npx -y skills -v
+# echo the command in cyan, then run it
+run() { printf '\033[0;36m%s\033[0m\n' "$*"; "$@"; }
+
+run npx -y skills -v
 
 # SENTIMONY SKILLS
 # All at once
 # npx skills add sentimony/skills -a codex claude-code -y
 # Or each separately
 # a "\ " prefix disables a skill on purpose: the leading space makes the name match nothing
-npx skills add https://github.com/sentimony/skills -s \
+run npx skills add https://github.com/sentimony/skills -s \
   scope-triage \
   \ scope-check \
   plan-crafting \
@@ -39,6 +42,6 @@ npx skills add https://github.com/sentimony/skills -s \
   \ skill-crafting \
   -a codex claude-code -y
 
-echo "npx -y skillio -v" && npx -y skillio -v
-echo "npx skillio ls -g" && npx skillio ls -g
-echo "npx skillio ls" && npx skillio ls
+run npx -y skillio -v
+run npx skillio ls -g
+run npx skillio ls

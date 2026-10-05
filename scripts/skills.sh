@@ -24,16 +24,16 @@ run npx skills add https://github.com/sentimony/skills -s \
   review-request \
   review-resolution \
   debugging \
-  web-debug \
+  \ web-debug \
   \ webapp-debugger \
   verification-gate \
   branch-finish \
   commit-all \
   gh-switch \
-  frontend-crafting \
-  vitest \
-  typescript \
-  echarts \
+  \ frontend-crafting \
+  \ vitest \
+  \ typescript \
+  \ echarts \
   prose-crafting \
   dashfix \
   negafix \

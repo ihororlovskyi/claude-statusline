@@ -12,14 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: bash tests/run.sh
-      # twice: the second run must take the backup path; a space in the dir checks the quoting
+      # twice over a changed script: the second run must back it up; a space in the dir
+      # checks that the commands written to settings.json still run
       - name: install.sh
         run: |
           export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude config"
           sh install.sh
+          echo '# changed' >> "$CLAUDE_CONFIG_DIR/statusline.sh"
           sh install.sh
-          jq -e '.statusLine.type == "command" and .subagentStatusLine.type == "command"' \
-            "$CLAUDE_CONFIG_DIR/settings.json"
+          grep -q '^# changed$' "$CLAUDE_CONFIG_DIR/statusline.sh.bak"
+          cmp scripts/statusline.sh "$CLAUDE_CONFIG_DIR/statusline.sh"
+          settings="$CLAUDE_CONFIG_DIR/settings.json"
+          sh -c "$(jq -r .statusLine.command "$settings")" < tests/cases/pro-full.json | grep -q .
+          sh -c "$(jq -r .subagentStatusLine.command "$settings")" < tests/cases/panel-rows.json | grep -q .
 
   # separate from the required snapshots job: it needs GitHub and npm, so a network
   # hiccup must not block merges
@@ -27,4 +32,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
-      - run: sh scripts/skills.sh
+      # skillio usage exits on a missing ~/.codex/sessions, which a fresh runner has
+      - run: |
+          mkdir -p ~/.codex/sessions
+          sh scripts/skills.sh

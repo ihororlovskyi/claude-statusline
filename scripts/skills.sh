@@ -45,7 +45,7 @@ run npx skills add https://github.com/sentimony/skills -s \
 # skills.local.sh passes --no-list and prints its own listing after the local skills
 if [ "$1" != --no-list ]; then
   run npx -y skillio -v
-  run npx skillio list -g
-  run npx skillio ls
+  run npx skillio ls -g
+  run npx skillio list
   run npx skillio usage --period 2w
 fi

@@ -6,6 +6,7 @@ __pycache__/
 *.local*
 
 .agents/
-.claude/
+.claude/*
+!.claude/agents/
 .codex/
 skills-lock.json

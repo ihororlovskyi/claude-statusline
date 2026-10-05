@@ -7,6 +7,7 @@ echo "npx -y skills -v" && npx -y skills -v
 # All at once
 # npx skills add sentimony/skills -a codex claude-code -y
 # Or each separately
+# a "\ " prefix disables a skill on purpose: the leading space makes the name match nothing
 npx skills add https://github.com/sentimony/skills -s \
   scope-triage \
   \ scope-check \

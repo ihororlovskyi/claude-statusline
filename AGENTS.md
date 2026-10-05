@@ -11,6 +11,7 @@ Custom status line for Claude Code: `scripts/statusline.sh` renders the main sta
 | `install.sh` | Installer: puts both scripts into `~/.claude/` and sets both keys in `settings.json` via `jq` |
 | `README.md` | User-facing documentation |
 | `tests/run.sh` | Snapshot tests for both scripts, see Verifying changes |
+| `scripts/skills.sh` | Dev helper: installs the agent skills this repo uses (gitignored `.claude/skills/`, `.agents/`). Not installable: keep it out of `FILES` in `install.sh` |
 
 ## How it works
 
@@ -48,7 +49,8 @@ Keep them consistent with the main status line:
 - model and effort level - `\033[0;35m` (magenta);
 - cost and `thinking:on` - `\033[0;36m` (cyan);
 - labels and secondary text (`cntx:`, `tok`, `thinking:off`, `skills:`) - `\033[0;90m` (gray, ANSI bright black: the shade follows the terminal theme);
-- thresholds: token counts (main `cntx` and agent rows) are green below 100,000, yellow from 100,000, red from 150,000 tokens; bars (`cntx`, `sess`, `week`, `used`, `rest`) are yellow from 50%, red from 80%.
+- thresholds: token counts (main `cntx` and agent rows) are green below 100,000, yellow from 100,000, red from 150,000 tokens; bars (`cntx`, `sess`, `week`, `used`, `rest`) are yellow from 50%, red from 80%;
+- hints such as `(shift+tab to cycle)` are drawn by Claude Code itself, outside the status line; the scripts cannot restyle them.
 
 ## Installation
 
@@ -58,7 +60,7 @@ The repo is public: `install.sh` downloads raw files from `raw.githubusercontent
 
 ## Verifying changes
 
-Run the snapshot tests: `bash tests/run.sh` (CI runs it on macOS for every push to `main` and every PR, `.github/workflows/test.yml`). Each payload in `tests/cases/` is rendered and compared with `tests/expected/<name>.txt`; `panel-*` cases go to the agent panel script, synthetic agent transcripts live in `tests/fixtures/session/subagents/`. The runner pins `TZ=UTC`, points `CLAUDE_CONFIG_DIR` at `tests/fixtures/config` and masks the `rest:` line, which depends on today's date; keep new cases deterministic the same way (past `resets_at`, a `cwd` outside any git repo).
+Run the snapshot tests: `bash tests/run.sh` (CI runs it on macOS for every push to `main` and every PR, `.github/workflows/test.yml`). Each payload in `tests/cases/` is rendered and compared with `tests/expected/<name>.txt`; `panel-*` cases go to the agent panel script, synthetic agent transcripts live in `tests/fixtures/session/subagents/`. The runner pins `TZ=UTC`, points `CLAUDE_CONFIG_DIR` at `tests/fixtures/config` and masks the `rest:` line, which depends on today's date; keep new cases deterministic the same way (past `resets_at`, a `cwd` outside any git repo). Size fixtures so each one moves the rounded result: the `skills:` total is rounded to 100, so a skill fixture whose description adds under ~150 tokens can break its branch (CRLF, `disable-model-invocation`) without changing the snapshot. Check a new case by breaking its branch once and watching it fail.
 
 After an intended output change, regenerate the snapshots with `bash tests/run.sh --update` and review `git diff tests/expected` before committing. Add a case for every new branch of the output.
 
@@ -70,4 +72,4 @@ To check the panel live, run several background test agents: `test-haiku`, `test
 
 ## Git workflow
 
-`main` is protected by a GitHub ruleset: no direct pushes, force pushes or deletion. Every change goes through a branch and a PR, merged with squash only (`gh pr merge --squash`); the head branch is deleted automatically after the merge.
+`main` is protected by a GitHub ruleset: no direct pushes, force pushes or deletion. Every change goes through a branch and a PR, merged with squash only (`gh pr merge --squash`); the head branch is deleted automatically after the merge. The squash commit takes the PR title and body as its message, so update the PR description with every change pushed to the branch.

@@ -4,9 +4,10 @@ input=$(cat)
 
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 subagents_dir="${transcript%.jsonl}/subagents"
-echo "$input" | jq -r '.tasks[] | [.id, (.status // ""), (.label // .description // ""), ((.tokenCount // 0) | tostring), (.model // ""), ((.contextWindowSize // 0) | tostring)] | join("\u001f")' |
-# \037 instead of tab: read collapses consecutive tabs, shifting empty fields
-while IFS="$(printf '\037')" read -r id status label tok raw ctx; do
+echo "$input" | jq -r '.tasks[] | [.id, (.status // ""), ((.label // .description // "") | gsub("[\n\r\u001f]"; " ")), ((.tokenCount // 0) | tostring), (.model // "")] | join("\u001f")' |
+# \037 instead of tab: read collapses consecutive tabs, shifting empty fields;
+# newlines and \037 in the label are flattened so one task stays one record
+while IFS="$(printf '\037')" read -r id status label tok raw; do
   [ -z "$id" ] && continue
   # empty content hides finished/idle rows
   if [ "$status" != "running" ]; then
@@ -18,6 +19,11 @@ while IFS="$(printf '\037')" read -r id status label tok raw ctx; do
   if [ -z "$raw" ] && [ -f "$agent_file" ]; then
     raw=$(grep -oE '"model":"claude[^"]*"' "$agent_file" 2>/dev/null | tail -1 | sed -E 's/.*"model":"//; s/"$//')
   fi
+  # payload has no effort; the transcript records the effective one per turn (from the agent's
+  # frontmatter, else the session's; prompt text does not change it); models without effort omit it
+  effort=""
+  # top-level field of assistant entries only: a nested "effort" key in tool input must not match
+  [ -f "$agent_file" ] && effort=$(jq -r 'select(.type == "assistant") | .effort // empty | strings' "$agent_file" 2>/dev/null | tail -1)
   # claude-opus-4-8 -> Opus 4.8, claude-haiku-4-5-20251001 -> Haiku 4.5
   model_name=$(echo "${raw#claude-}" | sed -nE 's/^(opus|sonnet|haiku|fable|mythos)-([0-9]+)(-([0-9]{1,2}))?([^0-9].*)?$/\1 \2.\4/p' | sed -E 's/\.$//' | awk '{ print toupper(substr($0,1,1)) substr($0,2) }')
 
@@ -49,16 +55,19 @@ while IFS="$(printf '\037')" read -r id status label tok raw ctx; do
       | add // 0' "$agent_file" 2>/dev/null)
   fi
 
-  # tokens: same thresholds and colors as the main cntx line
-  tok_str=$(LC_NUMERIC=C awk -v n="$tok" -v c="$ctx" 'BEGIN {
-    pct = (c > 0 ? n * 100 / c : 0)
-    col = (pct >= 80 ? "31" : (pct >= 50 ? "33" : "32"))
-    printf "\033[0;%sm%d\033[0m \033[0;90mtok\033[0m", col, n
+  # tokens: same absolute thresholds and colors as the main cntx line
+  tok_str=$(LC_ALL=C awk -v n="$tok" 'BEGIN {
+    col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
+    # thousands separators by hand: the %\047d flag is not portable across awk implementations
+    s = sprintf("%d", n)
+    while (s ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", s)
+    printf "\033[0;%sm%s\033[0m \033[0;38;2;153;153;153mtok\033[0m", col, s
   }')
-  cost_str=$(LC_NUMERIC=C awk -v c="${cost:-0}" 'BEGIN { printf "\033[0;36m$%.2f\033[0m", c }')
+  cost_str=$(LC_ALL=C awk -v c="${cost:-0}" 'BEGIN { printf "\033[0;36m$%.2f\033[0m", c }')
 
   content="↳"
   [ -n "$model_name" ] && content="$content $(printf '\033[0;35m%s\033[0m' "$model_name")"
+  [ -n "$effort" ] && content="$content $(printf '\033[0;35m%s\033[0m' "$effort")"
   content="$content  $tok_str  $cost_str  $label"
   jq -cn --arg id "$id" --arg content "$content" '{id:$id, content:$content}'
 done

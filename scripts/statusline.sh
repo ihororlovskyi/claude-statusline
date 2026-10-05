@@ -2,19 +2,28 @@
 input=$(cat)
 
 # parse all fields from stdin in one jq call via eval+@sh
+# every field is type-checked before @sh: an array would become several shell words and run as a command;
+# numbers reach awk and $(( )); timestamps are floored and bounded because $(( )) takes only plain integers
 eval "$(echo "$input" | jq -r '
-  "cwd="          + (.cwd | @sh),
-  "model="        + ((.model.display_name // "") | @sh),
-  "used="         + ((.context_window.used_percentage // "") | tostring | @sh),
-  "ctx_size="     + ((.context_window.context_window_size // "") | tostring | @sh),
-  "effort_val="   + ((.effort.level // "") | @sh),
-  "thinking_in="  + ((.thinking.enabled // "") | tostring | @sh),
-  "cost_usd="     + ((.cost.total_cost_usd // "") | tostring | @sh),
-  "session_pct="  + ((.rate_limits.five_hour.used_percentage // "") | tostring | @sh),
-  "session_reset="+ ((.rate_limits.five_hour.resets_at // "") | tostring | @sh),
-  "weekly_pct="   + ((.rate_limits.seven_day.used_percentage // "") | tostring | @sh),
-  "weekly_reset=" + ((.rate_limits.seven_day.resets_at // "") | tostring | @sh)
+  def str: if type == "string" then . else "" end;
+  def num: if type == "number" then tostring else "" end;
+  def int: if type == "number" and . >= 0 and . < 1e12 then floor | tostring else "" end;
+  "cwd="          + (.cwd | str | @sh),
+  "project_dir="  + (.workspace.project_dir | str | @sh),
+  "model="        + (.model.display_name | str | @sh),
+  "used="         + (.context_window.used_percentage | num | @sh),
+  "ctx_size="     + (.context_window.context_window_size | num | @sh),
+  "ctx_tokens="   + (.context_window.current_usage | if type == "object" then [.input_tokens, .cache_creation_input_tokens, .cache_read_input_tokens] | map(select(type == "number")) | if length > 0 then add | tostring else "" end else "" end | @sh),
+  "effort_val="   + (.effort.level | str | @sh),
+  "thinking_in="  + (.thinking.enabled | if type == "boolean" then tostring else "" end | @sh),
+  "cost_usd="     + (.cost.total_cost_usd | num | @sh),
+  "session_pct="  + (.rate_limits.five_hour.used_percentage | num | @sh),
+  "session_reset="+ (.rate_limits.five_hour.resets_at | int | @sh),
+  "weekly_pct="   + (.rate_limits.seven_day.used_percentage | num | @sh),
+  "weekly_reset=" + (.rate_limits.seven_day.resets_at | int | @sh)
 ')"
+
+claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 dir=$(basename "$cwd")
 
@@ -32,22 +41,17 @@ if git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
   fi
 fi
 
-# thinking: stdin first, fallback to settings.json; effort fallback if not in stdin
-thinking_label="thinking:off"
-if [ "$thinking_in" = "true" ]; then
-  thinking_label="thinking:on"
-elif [ -z "$thinking_in" ] || [ -z "$effort_val" ]; then
-  settings_file="$HOME/.claude/settings.json"
+# thinking: stdin first, fallback to settings.json
+# effort comes from stdin only: models without effort support (Haiku) omit it,
+# and a settings.json fallback would show an effort level they do not have
+# /config writes alwaysThinkingEnabled=false when thinking is turned off and drops the key when it is
+# turned on, so a missing key means on; no usable source -> unknown, shown as "no"
+if [ -z "$thinking_in" ]; then
+  settings_file="$claude_dir/settings.json"
   if [ -f "$settings_file" ]; then
-    eval "$(jq -r '
-      "thinking_fallback=" + ((.alwaysThinkingEnabled // false) | tostring | @sh),
-      "effort_fallback="   + (.effortLevel // "" | @sh)
-    ' "$settings_file" 2>/dev/null)"
-    [ -z "$thinking_in" ] && thinking_in="$thinking_fallback"
-    [ -z "$effort_val"  ] && effort_val="$effort_fallback"
+    thinking_in=$(jq -r '.alwaysThinkingEnabled | if type == "boolean" then tostring elif . == null then "true" else "" end' "$settings_file" 2>/dev/null)
   fi
 fi
-[ "$thinking_in" = "true" ] && thinking_label="thinking:on"
 
 # labelled progress bar
 render_bar() {
@@ -60,11 +64,14 @@ render_bar() {
   bar=""
   i=0; while [ $i -lt $filled ]; do bar="${bar}█"; i=$(( i + 1 )); done
   i=0; while [ $i -lt $empty ];  do bar="${bar}░"; i=$(( i + 1 )); done
-  if   [ "$pct_int" -ge 80 ]; then printf "\033[0;90m%s:\033[0m\033[0;31m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
-  elif [ "$pct_int" -ge 50 ]; then printf "\033[0;90m%s:\033[0m\033[0;33m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
-  else                             printf "\033[0;90m%s:\033[0m\033[0;32m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
+  if   [ "$pct_int" -ge 80 ]; then printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;31m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
+  elif [ "$pct_int" -ge 50 ]; then printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;33m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
+  else                             printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;32m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
   fi
 }
+
+# awk instead of the printf builtin: sh mode ignores a per-command LC_ALL and misparses decimals in comma locales
+round() { LC_ALL=C awk -v n="$1" 'BEGIN { printf "%.0f", n }'; }
 
 fmt_eta_hm() {
   total="$1"; [ "$total" -lt 0 ] && total=0
@@ -74,69 +81,100 @@ fmt_eta_dhm() {
   total="$1"; [ "$total" -lt 0 ] && total=0
   printf "%dd %dh %dm" "$(( total / 86400 ))" "$(( (total % 86400) / 3600 ))" "$(( (total % 3600) / 60 ))"
 }
+# reset moment in local time, e.g. "Mon 19:00"; LC_ALL=C keeps English day names
+fmt_reset_at() {
+  LC_ALL=C date -r "$1" "+%a %H:%M" 2>/dev/null || LC_ALL=C date -d "@$1" "+%a %H:%M" 2>/dev/null
+}
 
 p6="      "
 
-# line 1: cost
-cost_line1=""
-if [ -n "$cost_usd" ] && [ "$cost_usd" != "0" ]; then
-  cost_fmt=$(LC_NUMERIC=C awk "BEGIN { printf \"\$%.2f\", $cost_usd }")
-  cost_line1=$(printf "  \033[0;36m%s\033[0m" "$cost_fmt")
-fi
-
+# line 1: model + effort level; models without effort show nothing after the name
+gray="\033[0;38;2;153;153;153m"
 model_str=""
 [ -n "$model" ] && model_str=$(printf "  \033[0;35m%s\033[0m" "$model")
-printf "\033[1;32m➜\033[0m  \033[0;36m%s\033[0m%s%s%s\n" "$dir" "$git_info" "$model_str" "$cost_line1"
+[ -n "$effort_val" ] && model_str=$(printf "%s \033[0;35m%s\033[0m" "$model_str" "$effort_val")
+# session cost: on the sess line, else on the cntx line, else (no context data) on line 1
+cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" 'BEGIN { if (c + 0 > 0) printf "  \033[0;36m$%.2f\033[0m", c }')
+if [ -z "$used" ] && [ -n "$cost_usd" ]; then
+  model_str="$model_str$cost_str"
+fi
+printf "\033[1;32m➜\033[0m  \033[0;36m%s\033[0m%s%s\n" "$dir" "$git_info" "$model_str"
 
-if [ -n "$model" ] && [ -n "$used" ]; then
-  used_int=$(printf "%.0f" "$used")
+# line 2: thinking + skills estimate
+# skills: the payload has no per-category context breakdown, so estimate the skill listing from
+# name + description in project and user SKILL.md frontmatter (~3 chars per token, matches /context
+# within ~10%); skills with disable-model-invocation are not listed; plugin skills are not counted
+set --
+for f in "${project_dir:-$cwd}"/.claude/skills/*/SKILL.md "$claude_dir"/skills/*/SKILL.md; do
+  # an unmatched glob stays literal, and BSD awk aborts on a missing file
+  [ -f "$f" ] && set -- "$@" "$f"
+done
+skills_str=""
+[ $# -gt 0 ] && skills_str=$(LC_ALL=C awk -v s="${ctx_size:-0}" '
+  function flush() { if (!skip) total += len; len = 0 }
+  FNR == 1 { flush(); fm = 0; skip = 0; in_desc = 0 }
+  # CRLF files: a trailing \r would hide the --- delimiters and skip the whole file
+  { sub(/\r$/, "") }
+  /^---[ \t]*$/ { fm++; in_desc = 0; next }
+  fm != 1 { next }
+  /^disable-model-invocation:[ \t]*true/ { skip = 1 }
+  /^(name|description):/ { len += length($0); in_desc = ($0 ~ /^description:/); next }
+  in_desc && /^[ \t]/ { len += length($0); next }
+  { in_desc = 0 }
+  END {
+    flush()
+    if (total == 0) exit
+    n = total / 3
+    u = sprintf("%d", int(n / 100 + 0.5) * 100)
+    while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+    printf "  skills: ~%s tokens", u
+    if (s > 0) printf " (~%.1f%%)", n * 100 / s
+  }' "$@" 2>/dev/null)
+case "$thinking_in" in
+  true)  think_str=$(printf "${gray}thinking:\033[0m\033[0;36mon\033[0m") ;;
+  false) think_str=$(printf "${gray}thinking:off\033[0m") ;;
+  *)     think_str=$(printf "${gray}thinking:no\033[0m") ;;
+esac
+printf "%s%s${gray}%s\033[0m\n" "$p6" "$think_str" "$skills_str"
 
-  # line 2: thinking + effort
-  if [ "$thinking_label" = "thinking:on" ]; then
-    th_colored=$(printf "\033[0;90mthinking:\033[0m\033[0;36mon\033[0m")
-  else
-    th_colored=$(printf "\033[0;90mthinking:\033[0m\033[0;90moff\033[0m")
-  fi
-  ef_colored=""
-  [ -n "$effort_val" ] && ef_colored=$(printf "  \033[0;90meffort:\033[0m\033[0;36m%s\033[0m" "$effort_val")
-  printf "%s%s%s\n" "$p6" "$th_colored" "$ef_colored"
+if [ -n "$used" ]; then
+  used_int=$(round "$used")
 
-  # line 3: cntx bar + tokens (one awk call)
-  read -r tok_k ctx_k <<EOF
-$(LC_NUMERIC=C awk "BEGIN {
-  u = $ctx_size * $used / 100 / 1000
-  t = $ctx_size / 1000
-  printf \"%s\t%s\n\",
-    (u >= 1000 ? sprintf(\"%.0fM\", u/1000) : sprintf(\"%.0fk\", u)),
-    (t >= 1000 ? sprintf(\"%.0fM\", t/1000) : sprintf(\"%.0fk\", t))
-}")
-EOF
-  if   [ "$used_int" -ge 80 ]; then tokens=$(printf "\033[0;31m%s\033[0m\033[0;90m/%s\033[0m" "$tok_k" "$ctx_k")
-  elif [ "$used_int" -ge 50 ]; then tokens=$(printf "\033[0;33m%s\033[0m\033[0;90m/%s\033[0m" "$tok_k" "$ctx_k")
-  else                              tokens=$(printf "\033[0;32m%s\033[0m\033[0;90m/%s\033[0m" "$tok_k" "$ctx_k")
-  fi
+  # line 3: cntx bar + exact tokens / window size (one awk call)
+  # current_usage gives exact tokens; older payloads only have the percentage
+  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" 'BEGIN {
+  if (n == "") n = s * p / 100
+  col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
+  # thousands separators by hand: the %\047d flag is not portable across awk implementations
+  u = sprintf("%d", n)
+  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+  t = s / 1000
+  t = (t >= 1000 ? sprintf("%.0fM", t/1000) : sprintf("%.0fk", t))
+  printf "\033[0;%sm%s\033[0m \033[0;38;2;153;153;153mtok /%s\033[0m", col, u, t
+}')
   ctx_bar=$(render_bar "cntx" "$used_int")
-  printf "%s%s  %s\n" "$p6" "$ctx_bar" "$tokens"
+  [ -z "$session_pct" ] && ctx_info="$ctx_info$cost_str"
+  printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
 
   now=$(date +%s)
 
   # line 4: sess
   if [ -n "$session_pct" ]; then
-    s_int=$(printf "%.0f" "$session_pct")
+    s_int=$(round "$session_pct")
     sess_bar=$(render_bar "sess" "$s_int")
     if [ -n "$session_reset" ]; then
-      printf "%s%s  \033[0;90m%s\033[0m\n" "$p6" "$sess_bar" "$(fmt_eta_hm $(( session_reset - now )))"
+      printf "%s%s  \033[0;38;2;153;153;153m%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
     else
-      printf "%s%s\n" "$p6" "$sess_bar"
+      printf "%s%s%s\n" "$p6" "$sess_bar" "$cost_str"
     fi
   fi
 
   # line 5: week
   if [ -n "$weekly_pct" ]; then
-    w_int=$(printf "%.0f" "$weekly_pct")
+    w_int=$(round "$weekly_pct")
     week_bar=$(render_bar "week" "$w_int")
     if [ -n "$weekly_reset" ]; then
-      printf "%s%s  \033[0;90m%s\033[0m\n" "$p6" "$week_bar" "$(fmt_eta_dhm $(( weekly_reset - now )))"
+      printf "%s%s  \033[0;38;2;153;153;153m%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
     else
       printf "%s%s\n" "$p6" "$week_bar"
     fi
@@ -144,13 +182,13 @@ EOF
 
   # Enterprise: no sess/week limits → show real usage from claude.ai API
   if [ -z "$session_pct" ] && [ -z "$weekly_pct" ]; then
-    cache_file="$HOME/.claude/usage-cache.json"
-    fetch_script="$HOME/.claude/usage-fetch.js"
+    cache_file="$claude_dir/usage-cache.json"
+    fetch_script="$claude_dir/usage-fetch.js"
 
     # Refresh cache if absent or >5 min stale (background, non-blocking)
     cache_age=999999
     if [ -f "$cache_file" ]; then
-      cache_ts=$(jq -r '.timestamp // 0' "$cache_file" 2>/dev/null)
+      cache_ts=$(jq -r '.timestamp | if type == "number" and . >= 0 and . < 1e15 then floor else 0 end' "$cache_file" 2>/dev/null)
       [ -n "$cache_ts" ] && cache_age=$(( now - cache_ts / 1000 ))
     fi
     [ "$cache_age" -gt 300 ] && [ -f "$fetch_script" ] && node "$fetch_script" &>/dev/null &
@@ -159,30 +197,27 @@ EOF
     spend_used="" spend_limit="" spend_pct=""
     if [ -f "$cache_file" ] && [ "$cache_age" -lt 86400 ]; then
       read -r spend_used spend_limit spend_pct <<EOF
-$(jq -r '[.data.spend.used.amount_minor // 0, .data.spend.used.exponent // 2, .data.spend.limit.amount_minor // 0, .data.spend.limit.exponent // 2, .data.spend.percent // 0] | @tsv' "$cache_file" 2>/dev/null | LC_NUMERIC=C awk -F'\t' '{
+$(jq -r '[.data.spend.used.amount_minor // 0, .data.spend.used.exponent // 2, .data.spend.limit.amount_minor // 0, .data.spend.limit.exponent // 2, .data.spend.percent // 0] | @tsv' "$cache_file" 2>/dev/null | LC_ALL=C awk -F'\t' '{
   used_m=$1+0; used_e=$2+0; lim_m=$3+0; lim_e=$4+0; pct=$5+0
-  if (used_e==0) used_e=2; if (lim_e==0) lim_e=2
   printf "%.2f %.0f %d\n", used_m/10^used_e, lim_m/10^lim_e, pct
 }')
 EOF
     fi
 
-    # Time until first of next month (UTC midnight = billing reset)
+    # billing month runs between UTC midnights on the 1st
+    month_start=$(TZ=UTC date -v1d -v0H -v0M -v0S +%s 2>/dev/null)
     next_month=$(TZ=UTC date -v+1m -v1d -v0H -v0M -v0S +%s 2>/dev/null)
-    eta_str=""
-    [ -n "$next_month" ] && eta_str=$(fmt_eta_dhm $(( next_month - now )))
 
     if [ -n "$spend_pct" ] && [ -n "$spend_used" ]; then
       usage_bar=$(render_bar "used" "$spend_pct")
-      if [ -n "$eta_str" ]; then
-        printf "%s%s  \033[0;36m\$%s\033[0;90m/\$%s\033[0m  \033[0;90m%s\033[0m\n" \
-          "$p6" "$usage_bar" "$spend_used" "$spend_limit" "$eta_str"
-      else
-        printf "%s%s  \033[0;36m\$%s\033[0;90m/\$%s\033[0m\n" \
-          "$p6" "$usage_bar" "$spend_used" "$spend_limit"
-      fi
-    elif [ -n "$eta_str" ]; then
-      printf "%s\033[0;90musage:\033[0m  \033[0;90m%s\033[0m\n" "$p6" "$eta_str"
+      printf "%s%s  \033[0;36m\$%s\033[0;38;2;153;153;153m/\$%s\033[0m\n" \
+        "$p6" "$usage_bar" "$spend_used" "$spend_limit"
+    fi
+
+    # rest: share of the billing month already elapsed + time until reset
+    if [ -n "$month_start" ] && [ -n "$next_month" ]; then
+      rest_bar=$(render_bar "rest" "$(( (now - month_start) * 100 / (next_month - month_start) ))")
+      printf "%s%s  \033[0;38;2;153;153;153m%s\033[0m\n" "$p6" "$rest_bar" "$(fmt_eta_dhm $(( next_month - now )))"
     fi
   fi
 fi

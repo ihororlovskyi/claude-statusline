@@ -1,0 +1,3 @@
+{"type":"assistant","effort":"high","message":{"id":"s1","model":"claude-sonnet-5-5","content":[{"type":"tool_use","input":{"effort":"low"}}],"usage":{"input_tokens":100000,"output_tokens":1000}}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"effort\":\"low\"}"}]}}
+{"type":"assistant","effort":"lo

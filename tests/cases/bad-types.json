@@ -1,0 +1,1 @@
+{"cwd":"/nonexistent/project","model":{"display_name":["rm","-rf"]},"thinking":{"enabled":"yes"},"context_window":{"used_percentage":"50"},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1e20}}}

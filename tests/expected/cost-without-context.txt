@@ -1,0 +1,2 @@
+[1;32m➜[0m  [0;36mproject[0m  [0;35mOpus[0m  [0;36m$0.88[0m
+      [0;90mthinking:no[0m[0;90m  skills: ~200 tokens[0m

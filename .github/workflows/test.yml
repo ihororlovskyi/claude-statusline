@@ -1,0 +1,14 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  snapshots:
+    # macOS: the scripts rely on BSD date -v
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash tests/run.sh

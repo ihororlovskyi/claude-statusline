@@ -8,49 +8,38 @@ eval "$(echo "$input" | jq -r '
   def str: if type == "string" then . else "" end;
   def num: if type == "number" then tostring else "" end;
   def int: if type == "number" and . >= 0 and . < 1e12 then floor | tostring else "" end;
+  def pct: if type == "number" and . > -1e9 and . < 1e9 then round | tostring else "" end;
   "cwd="          + (.cwd | str | @sh),
   "project_dir="  + (.workspace.project_dir | str | @sh),
   "model="        + (.model.display_name | str | @sh),
   "used="         + (.context_window.used_percentage | num | @sh),
+  "used_int="     + (.context_window.used_percentage | pct | @sh),
   "ctx_size="     + (.context_window.context_window_size | num | @sh),
   "ctx_tokens="   + (.context_window.current_usage | if type == "object" then [.input_tokens, .cache_creation_input_tokens, .cache_read_input_tokens] | map(select(type == "number")) | if length > 0 then add | tostring else "" end else "" end | @sh),
   "effort_val="   + (.effort.level | str | @sh),
   "thinking_in="  + (.thinking.enabled | if type == "boolean" then tostring else "" end | @sh),
   "cost_usd="     + (.cost.total_cost_usd | num | @sh),
-  "session_pct="  + (.rate_limits.five_hour.used_percentage | num | @sh),
+  "session_pct="  + (.rate_limits.five_hour.used_percentage | pct | @sh),
   "session_reset="+ (.rate_limits.five_hour.resets_at | int | @sh),
-  "weekly_pct="   + (.rate_limits.seven_day.used_percentage | num | @sh),
+  "weekly_pct="   + (.rate_limits.seven_day.used_percentage | pct | @sh),
   "weekly_reset=" + (.rate_limits.seven_day.resets_at | int | @sh)
 ')"
 
 claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+gray="\033[0;90m"
+cyan="\033[0;36m"
+mag="\033[0;35m"
 
 dir=$(basename "$cwd")
 
 # git branch + dirty state
+# symbolic-ref prints nothing outside a repo or on a detached HEAD
 git_info=""
-if git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
-  branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
-  if [ -n "$branch" ]; then
-    dirty=$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)
-    if [ -n "$dirty" ]; then
-      git_info=$(printf " \033[1;34mgit:(\033[0;31m%s\033[1;34m)\033[0;33m ✗\033[0m" "$branch")
-    else
-      git_info=$(printf " \033[1;34mgit:(\033[0;31m%s\033[1;34m)\033[0m" "$branch")
-    fi
-  fi
-fi
-
-# thinking: stdin first, fallback to settings.json
-# effort comes from stdin only: models without effort support (Haiku) omit it,
-# and a settings.json fallback would show an effort level they do not have
-# /config writes alwaysThinkingEnabled=false when thinking is turned off and drops the key when it is
-# turned on, so a missing key means on; no usable source -> unknown, shown as "no"
-if [ -z "$thinking_in" ]; then
-  settings_file="$claude_dir/settings.json"
-  if [ -f "$settings_file" ]; then
-    thinking_in=$(jq -r '.alwaysThinkingEnabled | if type == "boolean" then tostring elif . == null then "true" else "" end' "$settings_file" 2>/dev/null)
-  fi
+branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
+if [ -n "$branch" ]; then
+  dirty=""
+  [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ] && dirty="\033[0;33m ✗"
+  git_info=$(printf " \033[1;34mgit:(\033[0;31m%s\033[1;34m)$dirty\033[0m" "$branch")
 fi
 
 # labelled progress bar
@@ -64,14 +53,11 @@ render_bar() {
   bar=""
   i=0; while [ $i -lt $filled ]; do bar="${bar}█"; i=$(( i + 1 )); done
   i=0; while [ $i -lt $empty ];  do bar="${bar}░"; i=$(( i + 1 )); done
-  if   [ "$pct_int" -ge 80 ]; then printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;31m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
-  elif [ "$pct_int" -ge 50 ]; then printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;33m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
-  else                             printf "\033[0;38;2;153;153;153m%s:\033[0m\033[0;32m%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$bar" "$pct_int"
-  fi
+  col=32
+  [ "$pct_int" -ge 50 ] && col=33
+  [ "$pct_int" -ge 80 ] && col=31
+  printf "$gray%s:\033[0m\033[0;%sm%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$col" "$bar" "$pct_int"
 }
-
-# awk instead of the printf builtin: sh mode ignores a per-command LC_ALL and misparses decimals in comma locales
-round() { LC_ALL=C awk -v n="$1" 'BEGIN { printf "%.0f", n }'; }
 
 fmt_eta_hm() {
   total="$1"; [ "$total" -lt 0 ] && total=0
@@ -89,16 +75,15 @@ fmt_reset_at() {
 p6="      "
 
 # line 1: model + effort level; models without effort show nothing after the name
-gray="\033[0;38;2;153;153;153m"
 model_str=""
-[ -n "$model" ] && model_str=$(printf "  \033[0;35m%s\033[0m" "$model")
-[ -n "$effort_val" ] && model_str=$(printf "%s \033[0;35m%s\033[0m" "$model_str" "$effort_val")
+[ -n "$model" ] && model_str=$(printf "  $mag%s\033[0m" "$model")
+[ -n "$effort_val" ] && model_str=$(printf "%s $mag%s\033[0m" "$model_str" "$effort_val")
 # session cost: on the sess line, else on the cntx line, else (no context data) on line 1
-cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" 'BEGIN { if (c + 0 > 0) printf "  \033[0;36m$%.2f\033[0m", c }')
+cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" -v col="$cyan" 'BEGIN { if (c + 0 > 0) printf "  %s$%.2f\033[0m", col, c }')
 if [ -z "$used" ] && [ -n "$cost_usd" ]; then
   model_str="$model_str$cost_str"
 fi
-printf "\033[1;32m➜\033[0m  \033[0;36m%s\033[0m%s%s\n" "$dir" "$git_info" "$model_str"
+printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s\n" "$dir" "$git_info" "$model_str"
 
 # line 2: thinking + skills estimate
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from
@@ -131,18 +116,16 @@ skills_str=""
     if (s > 0) printf " (~%.1f%%)", n * 100 / s
   }' "$@" 2>/dev/null)
 case "$thinking_in" in
-  true)  think_str=$(printf "${gray}thinking:\033[0m\033[0;36mon\033[0m") ;;
+  true)  think_str=$(printf "${gray}thinking:\033[0m${cyan}on\033[0m") ;;
   false) think_str=$(printf "${gray}thinking:off\033[0m") ;;
   *)     think_str=$(printf "${gray}thinking:no\033[0m") ;;
 esac
 printf "%s%s${gray}%s\033[0m\n" "$p6" "$think_str" "$skills_str"
 
 if [ -n "$used" ]; then
-  used_int=$(round "$used")
-
   # line 3: cntx bar + exact tokens / window size (one awk call)
   # current_usage gives exact tokens; older payloads only have the percentage
-  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" 'BEGIN {
+  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" -v g="$gray" 'BEGIN {
   if (n == "") n = s * p / 100
   col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
   # thousands separators by hand: the %\047d flag is not portable across awk implementations
@@ -150,7 +133,7 @@ if [ -n "$used" ]; then
   while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
   t = s / 1000
   t = (t >= 1000 ? sprintf("%.0fM", t/1000) : sprintf("%.0fk", t))
-  printf "\033[0;%sm%s\033[0m \033[0;38;2;153;153;153mtok /%s\033[0m", col, u, t
+  printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, u, g, t
 }')
   ctx_bar=$(render_bar "cntx" "$used_int")
   [ -z "$session_pct" ] && ctx_info="$ctx_info$cost_str"
@@ -160,10 +143,9 @@ if [ -n "$used" ]; then
 
   # line 4: sess
   if [ -n "$session_pct" ]; then
-    s_int=$(round "$session_pct")
-    sess_bar=$(render_bar "sess" "$s_int")
+    sess_bar=$(render_bar "sess" "$session_pct")
     if [ -n "$session_reset" ]; then
-      printf "%s%s  \033[0;38;2;153;153;153m%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
+      printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
     else
       printf "%s%s%s\n" "$p6" "$sess_bar" "$cost_str"
     fi
@@ -171,10 +153,9 @@ if [ -n "$used" ]; then
 
   # line 5: week
   if [ -n "$weekly_pct" ]; then
-    w_int=$(round "$weekly_pct")
-    week_bar=$(render_bar "week" "$w_int")
+    week_bar=$(render_bar "week" "$weekly_pct")
     if [ -n "$weekly_reset" ]; then
-      printf "%s%s  \033[0;38;2;153;153;153m%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
+      printf "%s%s  $gray%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
     else
       printf "%s%s\n" "$p6" "$week_bar"
     fi
@@ -210,14 +191,14 @@ EOF
 
     if [ -n "$spend_pct" ] && [ -n "$spend_used" ]; then
       usage_bar=$(render_bar "used" "$spend_pct")
-      printf "%s%s  \033[0;36m\$%s\033[0;38;2;153;153;153m/\$%s\033[0m\n" \
+      printf "%s%s  $cyan\$%s$gray/\$%s\033[0m\n" \
         "$p6" "$usage_bar" "$spend_used" "$spend_limit"
     fi
 
     # rest: share of the billing month already elapsed + time until reset
     if [ -n "$month_start" ] && [ -n "$next_month" ]; then
       rest_bar=$(render_bar "rest" "$(( (now - month_start) * 100 / (next_month - month_start) ))")
-      printf "%s%s  \033[0;38;2;153;153;153m%s\033[0m\n" "$p6" "$rest_bar" "$(fmt_eta_dhm $(( next_month - now )))"
+      printf "%s%s  $gray%s\033[0m\n" "$p6" "$rest_bar" "$(fmt_eta_dhm $(( next_month - now )))"
     fi
   fi
 fi

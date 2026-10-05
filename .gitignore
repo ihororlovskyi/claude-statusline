@@ -3,8 +3,8 @@ Thumbs.db
 .idea/
 __pycache__/
 
-.env/
 *.local*
+.env/
 
 .agents/
 .claude/*

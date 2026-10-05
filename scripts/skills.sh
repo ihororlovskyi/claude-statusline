@@ -42,6 +42,10 @@ run npx skills add https://github.com/sentimony/skills -s \
   \ skill-crafting \
   -a codex claude-code -y
 
-run npx -y skillio -v
-run npx skillio ls -g
-run npx skillio ls
+# skills.local.sh passes --no-list and prints its own listing after the local skills
+if [ "$1" != --no-list ]; then
+  run npx -y skillio -v
+  run npx skillio ls -g
+  run npx skillio list
+  run npx skillio usage --period 2w
+fi

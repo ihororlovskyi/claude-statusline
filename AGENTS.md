@@ -11,7 +11,7 @@ Custom status line for Claude Code: `scripts/statusline.sh` renders the main sta
 | `install.sh` | Installer: puts both scripts into `~/.claude/` and sets both keys in `settings.json` via `jq` |
 | `README.md` | User-facing documentation |
 | `tests/run.sh` | Snapshot tests for both scripts, see Verifying changes |
-| `scripts/skills.sh` | Dev helper: installs the agent skills this repo uses (gitignored `.claude/skills/`, `.agents/`), then lists them with skillio. `--no-list` skips the listing: a gitignored `scripts/skills.local.sh` calls it that way and prints its own listing after adding local skills, so keep the flag. Not installable: keep it out of `FILES` in `install.sh` |
+| `scripts/skills.sh` | Dev helper: installs the agent skills this repo uses (gitignored `.claude/skills/`, `.agents/`), runs the gitignored `scripts/skills.local.sh` if present, then lists them with skl-x; never run `skills.local.sh` directly. Not installable: keep it out of `FILES` in `install.sh` |
 
 ## How it works
 

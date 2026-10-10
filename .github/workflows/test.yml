@@ -33,7 +33,4 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
-      # skillio usage exits on a missing ~/.codex/sessions, which a fresh runner has
-      - run: |
-          mkdir -p ~/.codex/sessions
-          sh scripts/skills.sh
+      - run: sh scripts/skills.sh

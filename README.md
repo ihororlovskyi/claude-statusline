@@ -4,7 +4,7 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 
 ```
 ➜  my-project git:(main) ✗  Opus 5.5 medium
-      thinking:on  skills: ~3,100 tokens (~0.3%)
+      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m
@@ -50,10 +50,11 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine).
 **Main status line**
 
 - directory, git branch with dirty marker, model and effort level (omitted for models without effort);
-- thinking mode (`thinking:on` / `off`, `no` when unknown);
-- next to it, an estimate of the context taken by the skill listing (`skills: ~3,100 tokens (~0.3%)`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
+- thinking mode (`thnk:on` / `off`, `no` when unknown);
+- next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
 - context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;
-- 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (on the `cntx` line when there are no rate limits);
+- at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either;
+- 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line);
 
 Bars turn yellow at 50% and red at 80%. Token counts turn yellow at 100,000 and red at 150,000 tokens.
 
@@ -63,12 +64,12 @@ Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate
 
 ```
 ➜  my-project git:(main) ✗  Opus 5.5 medium
-      thinking:on  skills: ~3,100 tokens (~0.3%)
+      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88
       rest:█░░░░░░░░░ 12%  27d 4h 24m
 ```
 
-The session cost on the `cntx` line is still an API-price estimate from Claude Code, not your contract price.
+The session cost (on the `used` line when it is shown, else on the `cntx` line) is still an API-price estimate from Claude Code, not your contract price.
 
 If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-fetch.js`, not part of this repo, refreshed in the background every 5 minutes), a monthly spend bar is added above `rest`:
 

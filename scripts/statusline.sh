@@ -10,6 +10,8 @@ eval "$(echo "$input" | jq -r '
   def int: if type == "number" and . >= 0 and . < 1e12 then floor | tostring else "" end;
   def pct: if type == "number" and . > -1e9 and . < 1e9 then round | tostring else "" end;
   "cwd="          + (.cwd | str | @sh),
+  "session_id="   + (.session_id | str | @sh),
+  "transcript="   + (.transcript_path | str | @sh),
   "project_dir="  + (.workspace.project_dir | str | @sh),
   "model="        + (.model.display_name | str | @sh),
   "used="         + (.context_window.used_percentage | if pct != "" then tostring else "" end | @sh),
@@ -78,14 +80,15 @@ p6="      "
 model_str=""
 [ -n "$model" ] && model_str=$(printf "  $mag%s\033[0m" "$model")
 [ -n "$effort_val" ] && model_str=$(printf "%s $mag%s\033[0m" "$model_str" "$effort_val")
-# session cost: on the sess line, else on the cntx line, else (no context data) on line 1
+# session cost: on the sess line, else on the used line, else on the cntx line, else (no context
+# data) on line 1
 cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" -v col="$cyan" 'BEGIN { if (c + 0 > 0) printf "  %s$%.2f\033[0m", col, c }')
 if [ -z "$used" ] && [ -n "$cost_usd" ]; then
   model_str="$model_str$cost_str"
 fi
 printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s\n" "$dir" "$git_info" "$model_str"
 
-# line 2: thinking + skills estimate
+# line 2: thinking + skills estimate + prompts
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from
 # name + description in project and user SKILL.md frontmatter (~3 chars per token, matches /context
 # within ~10%); skills with disable-model-invocation are not listed; plugin skills are not counted
@@ -112,56 +115,96 @@ skills_str=""
     n = total / 3
     u = sprintf("%d", int(n / 100 + 0.5) * 100)
     while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
-    printf "  skills: ~%s tokens", u
-    if (s > 0) printf " (~%.1f%%)", n * 100 / s
+    printf "  skll: ~%s tok", u
+    if (s > 0) printf " ~%.1f%%", n * 100 / s
   }' "$@" 2>/dev/null)
 case "$thinking_in" in
-  true)  think_str=$(printf "${gray}thinking:\033[0m${cyan}on\033[0m") ;;
-  false) think_str=$(printf "${gray}thinking:off\033[0m") ;;
-  *)     think_str=$(printf "${gray}thinking:no\033[0m") ;;
+  true)  think_str=$(printf "${gray}thnk:\033[0m${cyan}on\033[0m") ;;
+  false) think_str=$(printf "${gray}thnk:off\033[0m") ;;
+  *)     think_str=$(printf "${gray}thnk:no\033[0m") ;;
 esac
-printf "%s%s${gray}%s\033[0m\n" "$p6" "$think_str" "$skills_str"
+
+# prompts in the session: P per prompt, C per compaction, in transcript order. Tool results,
+# meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
+# summaries and /compact itself are user entries too, but not prompts
+marks=""
+[ -f "$transcript" ] && marks=$(grep -E '"type":"(user|system)"' "$transcript" 2>/dev/null | jq -rR '
+  fromjson? | select(type == "object") |
+  if .type == "system" then select(.subtype == "compact_boundary") | "C"
+  elif .type != "user" or .isMeta == true or .isCompactSummary == true or .isSidechain == true then empty
+  else .message.content |
+    if type == "string" then select(startswith("<") or startswith("/compact") | not) | "P"
+    elif type == "array" then select(map(.type?) | index("tool_result") | not) | "P"
+    else empty end
+  end' 2>/dev/null | tr -d '\n')
+# "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one
+prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" 'BEGIN {
+  p = gsub(/P/, "P", m)
+  if (p == 0) exit
+  u = sprintf("%d", p)
+  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+  printf "  \033[0;37m%s\033[0m %s%s", u, g, (p == 1 ? "prompt" : "prompts")
+  seg = m
+  gsub(/P/, "", seg)
+  if (seg != "") {
+    k = split(m, part, "C")
+    printf "  "
+    for (i = 1; i <= k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
+  }
+  printf "\033[0m"
+}')
+printf "%s%s${gray}%s\033[0m%s\n" "$p6" "$think_str" "$skills_str" "$prompts_str"
 
 if [ -n "$used" ]; then
-  # line 3: cntx bar + exact tokens / window size (one awk call)
   # current_usage gives exact tokens; older payloads only have the percentage
-  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" -v g="$gray" 'BEGIN {
+  ctx_n=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" 'BEGIN {
   if (n == "") n = s * p / 100
-  col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
-  # thousands separators by hand: the %\047d flag is not portable across awk implementations
-  u = sprintf("%d", n)
-  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
-  t = s / 1000
-  t = (t >= 1000 ? sprintf("%.0fM", t/1000) : sprintf("%.0fk", t))
-  printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, u, g, t
+  printf "%d", n
 }')
-  ctx_bar=$(render_bar "cntx" "$used_int")
-  [ -z "$session_pct" ] && ctx_info="$ctx_info$cost_str"
-  printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
+  case "$ctx_n" in ''|*[!0-9]*) ctx_n=0 ;; esac
+
+  # context growth since the previous prompt: the payload has no prompt boundary, so the
+  # promptId of the last user entry in the transcript marks it; per-session state holds
+  # "<promptId> <base> <last>", where base is the context when that prompt started
+  delta=0
+  case "$session_id" in
+    ''|*[!A-Za-z0-9_-]*) ;;
+    *)
+      prompt_id=""
+      [ -f "$transcript" ] && prompt_id=$(tail -c 262144 "$transcript" 2>/dev/null |
+        grep -o '"promptId":"[A-Za-z0-9_-]*"' | tail -n 1 | cut -d'"' -f4)
+      # zeros right after /compact are not a context size
+      if [ -n "$prompt_id" ] && [ "$ctx_n" -gt 0 ]; then
+        state_dir="$claude_dir/statusline-state"
+        state="$state_dir/$session_id"
+        s_prompt="" s_base="" s_last=""
+        [ -f "$state" ] && read -r s_prompt s_base s_last < "$state" 2>/dev/null
+        case "$s_base$s_last" in ''|*[!0-9]*) s_prompt="" ;; esac
+        if [ -z "$s_prompt" ]; then
+          base=$ctx_n
+          # a new session file: drop the ones idle for a week
+          find "$state_dir" -type f -mtime +7 -delete 2>/dev/null
+        elif [ "$s_prompt" != "$prompt_id" ]; then
+          base=$s_last
+        else
+          base=$s_base
+        fi
+        # after /compact the context shrinks: count the growth from the compacted size
+        [ "$ctx_n" -lt "$base" ] && base=$ctx_n
+        delta=$(( ctx_n - base ))
+        # write only on change; a failed write never breaks the render
+        if [ "$prompt_id $base $ctx_n" != "$s_prompt $s_base $s_last" ]; then
+          { mkdir -p "$state_dir" && printf '%s %s %s\n' "$prompt_id" "$base" "$ctx_n" > "$state.$$" &&
+            mv -f "$state.$$" "$state"; } 2>/dev/null || rm -f "$state.$$" 2>/dev/null
+        fi
+      fi
+      ;;
+  esac
 
   now=$(date +%s)
 
-  # line 4: sess
-  if [ -n "$session_pct" ]; then
-    sess_bar=$(render_bar "sess" "$session_pct")
-    if [ -n "$session_reset" ]; then
-      printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
-    else
-      printf "%s%s%s\n" "$p6" "$sess_bar" "$cost_str"
-    fi
-  fi
-
-  # line 5: week
-  if [ -n "$weekly_pct" ]; then
-    week_bar=$(render_bar "week" "$weekly_pct")
-    if [ -n "$weekly_reset" ]; then
-      printf "%s%s  $gray%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
-    else
-      printf "%s%s\n" "$p6" "$week_bar"
-    fi
-  fi
-
-  # Enterprise: no sess/week limits → show real usage from claude.ai API
+  # Enterprise: no sess/week limits, so the spend comes from the claude.ai API cache
+  spend_used="" spend_limit="" spend_pct=""
   if [ -z "$session_pct" ] && [ -z "$weekly_pct" ]; then
     cache_file="$claude_dir/usage-cache.json"
     fetch_script="$claude_dir/usage-fetch.js"
@@ -185,14 +228,58 @@ $(jq -r '[.data.spend.used.amount_minor // 0, .data.spend.used.exponent // 2, .d
 EOF
     fi
 
+  fi
+
+  # line 3: cntx bar + exact tokens / window size + growth since the previous prompt (one awk call)
+  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v n="$ctx_n" -v d="$delta" -v g="$gray" '
+  # thousands separators by hand: the %\047d flag is not portable across awk implementations
+  function group(x,   u) {
+    u = sprintf("%d", x)
+    while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+    return u
+  }
+  BEGIN {
+  col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
+  t = s / 1000
+  t = (t >= 1000 ? sprintf("%.0fM", t/1000) : sprintf("%.0fk", t))
+  printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, group(n), g, t
+  if (d > 0) printf "  \033[0;%sm+%s\033[0m %stok\033[0m", col, group(d), g
+}')
+  ctx_bar=$(render_bar "cntx" "$used_int")
+  # without a sess line the cost goes on the used line, else here
+  [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"
+  printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
+
+  # line 4: sess
+  if [ -n "$session_pct" ]; then
+    sess_bar=$(render_bar "sess" "$session_pct")
+    if [ -n "$session_reset" ]; then
+      printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
+    else
+      printf "%s%s%s\n" "$p6" "$sess_bar" "$cost_str"
+    fi
+  fi
+
+  # line 5: week
+  if [ -n "$weekly_pct" ]; then
+    week_bar=$(render_bar "week" "$weekly_pct")
+    if [ -n "$weekly_reset" ]; then
+      printf "%s%s  $gray%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
+    else
+      printf "%s%s\n" "$p6" "$week_bar"
+    fi
+  fi
+
+  # Enterprise: no sess/week limits → show real usage from claude.ai API
+  if [ -z "$session_pct" ] && [ -z "$weekly_pct" ]; then
     # billing month runs between UTC midnights on the 1st
     month_start=$(TZ=UTC date -v1d -v0H -v0M -v0S +%s 2>/dev/null)
     next_month=$(TZ=UTC date -v+1m -v1d -v0H -v0M -v0S +%s 2>/dev/null)
 
     if [ -n "$spend_pct" ] && [ -n "$spend_used" ]; then
       usage_bar=$(render_bar "used" "$spend_pct")
-      printf "%s%s  $cyan\$%s$gray/\$%s\033[0m\n" \
-        "$p6" "$usage_bar" "$spend_used" "$spend_limit"
+      printf "%s%s  $cyan\$%s$gray/\$%s\033[0m%s\n" \
+        "$p6" "$usage_bar" "$spend_used" "$spend_limit" "$cost_str"
     fi
 
     # rest: share of the billing month already elapsed + time until reset

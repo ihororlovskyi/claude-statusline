@@ -1,0 +1,25 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS: the scripts rely on BSD date -v
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash tests/run.sh
+      # the asset downloads the scripts of its own tag, not of main; GitHub counts its downloads
+      - name: install.sh pinned to the tag
+        run: |
+          mkdir dist
+          sed 's/CLAUDE_STATUSLINE_BRANCH:-main}/CLAUDE_STATUSLINE_BRANCH:-'"$GITHUB_REF_NAME"'}/' install.sh > dist/install.sh
+          grep -q "CLAUDE_STATUSLINE_BRANCH:-$GITHUB_REF_NAME}" dist/install.sh
+      - run: gh release create "$GITHUB_REF_NAME" dist/install.sh --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

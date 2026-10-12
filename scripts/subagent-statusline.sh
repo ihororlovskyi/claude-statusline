@@ -12,8 +12,13 @@ while IFS="$(printf '\037')" read -r id status task; do
   agent_file="$subagents_dir/agent-$id.jsonl"
   # finished rows need no transcript; /dev/null gives an empty entry list
   [ "$status" = "running" ] && [ -f "$agent_file" ] || agent_file=/dev/null
+  # agent type (rc-qa, Explore) from the undocumented agent-<id>.meta.json next to the transcript
+  agent_type=""
+  meta_file="$subagents_dir/agent-$id.meta.json"
+  [ "$status" = "running" ] && [ -f "$meta_file" ] &&
+    agent_type=$(jq -r '.agentType | strings' "$meta_file" 2>/dev/null)
   # one pass over the transcript: model fallback, effort, cost; fromjson? skips a half-written last line
-  jq -cnR --argjson t "$task" '
+  jq -cnR --argjson t "$task" --arg type "$agent_type" '
     def paint($c): "\u001b[0;\($c)m\(.)\u001b[0m";
     def commas: if test("^[0-9]{4}") then (.[:-3] | commas) + "," + .[-3:] else . end;
     # USD per MTok: input, 5m write, 1h write, cache read, output
@@ -50,10 +55,13 @@ while IFS="$(printf '\037')" read -r id status task; do
         | (($u.input_tokens // 0) * $p[0] + $w5m * $p[1] + $w1h * $p[2]
            + ($u.cache_read_input_tokens // 0) * $p[3] + ($u.output_tokens // 0) * $p[4]) * $mult / 1000000)
       | add // 0) catch 0 | . * 100 | round) as $cents
+    # the default types say nothing about the agent; text from a session file: no control characters
+    | ($type | gsub("[\u0000-\u001f\u007f]"; " ") | if . == "general-purpose" or . == "fork" then "" else . end) as $atype
     # tokens: same absolute thresholds and colors as the main cntx line
     | (($t.tokenCount | numbers) // 0 | floor) as $tok
     | {id: $t.id, content: (
         "↳"
+        + (if $atype != "" then " " + ($atype | paint(34)) + " " else "" end)
         + (if $name != "" then " " + ($name | paint(35)) else "" end)
         + (if $effort != "" then " " + ($effort | paint(35)) else "" end)
         + "  " + ($tok | tostring | commas | paint(if $tok >= 150000 then 31 elif $tok >= 100000 then 33 else 32 end))

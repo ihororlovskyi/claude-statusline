@@ -1,0 +1,5 @@
+{"type":"user","promptId":"prompt-a","message":{"role":"user","content":"first prompt"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"user","promptId":"prompt-b","message":{"role":"user","content":"second prompt"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}
+{"type":"user","promptId":"prompt-b","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"{\"promptId\":\"prompt-z\"}"}]}}

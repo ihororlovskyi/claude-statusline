@@ -27,10 +27,3 @@ jobs:
           sh -c "$(jq -r .statusLine.command "$settings")" < tests/cases/pro-full.json | grep -q .
           sh -c "$(jq -r .subagentStatusLine.command "$settings")" < tests/cases/panel-rows.json | grep -q .
 
-  # separate from the required snapshots job: it needs GitHub and npm, so a network
-  # hiccup must not block merges
-  skills:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: sh scripts/skills.sh

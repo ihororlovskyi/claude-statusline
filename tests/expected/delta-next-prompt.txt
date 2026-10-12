@@ -1,0 +1,4 @@
+[1;32m➜[0m  [0;36mproject[0m  [0;35mOpus 5.5[0m [0;35mmedium[0m
+      [0;90mthinking:[0m[0;36mon[0m[0;90m  skills: ~600 tokens (~0.1%)[0m
+      [0;90mcntx:[0m[0;32m░░░░░░░░░░[0m [0;37m6%[0m  [0;32m61,059[0m [0;90mtok /1M[0m  [0;32m+1,059[0m [0;90mtok[0m  [0;36m$28.97[0m
+      [0;90mrest: <date-dependent>

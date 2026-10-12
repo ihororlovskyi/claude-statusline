@@ -10,6 +10,8 @@ eval "$(echo "$input" | jq -r '
   def int: if type == "number" and . >= 0 and . < 1e12 then floor | tostring else "" end;
   def pct: if type == "number" and . > -1e9 and . < 1e9 then round | tostring else "" end;
   "cwd="          + (.cwd | str | @sh),
+  "session_id="   + (.session_id | str | @sh),
+  "transcript="   + (.transcript_path | str | @sh),
   "project_dir="  + (.workspace.project_dir | str | @sh),
   "model="        + (.model.display_name | str | @sh),
   "used="         + (.context_window.used_percentage | if pct != "" then tostring else "" end | @sh),
@@ -123,17 +125,65 @@ esac
 printf "%s%s${gray}%s\033[0m\n" "$p6" "$think_str" "$skills_str"
 
 if [ -n "$used" ]; then
-  # line 3: cntx bar + exact tokens / window size (one awk call)
   # current_usage gives exact tokens; older payloads only have the percentage
-  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" -v g="$gray" 'BEGIN {
+  ctx_n=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v p="$used" -v n="$ctx_tokens" 'BEGIN {
   if (n == "") n = s * p / 100
-  col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
+  printf "%d", n
+}')
+  case "$ctx_n" in ''|*[!0-9]*) ctx_n=0 ;; esac
+
+  # context growth since the previous prompt: the payload has no prompt boundary, so the
+  # promptId of the last user entry in the transcript marks it; per-session state holds
+  # "<promptId> <base> <last>", where base is the context when that prompt started
+  delta=0
+  case "$session_id" in
+    ''|*[!A-Za-z0-9_-]*) ;;
+    *)
+      prompt_id=""
+      [ -f "$transcript" ] && prompt_id=$(tail -c 262144 "$transcript" 2>/dev/null |
+        grep -o '"promptId":"[A-Za-z0-9_-]*"' | tail -n 1 | cut -d'"' -f4)
+      # zeros right after /compact are not a context size
+      if [ -n "$prompt_id" ] && [ "$ctx_n" -gt 0 ]; then
+        state_dir="$claude_dir/statusline-state"
+        state="$state_dir/$session_id"
+        s_prompt="" s_base="" s_last=""
+        [ -f "$state" ] && read -r s_prompt s_base s_last < "$state" 2>/dev/null
+        case "$s_base$s_last" in ''|*[!0-9]*) s_prompt="" ;; esac
+        if [ -z "$s_prompt" ]; then
+          base=$ctx_n
+          # a new session file: drop the ones idle for a week
+          find "$state_dir" -type f -mtime +7 -delete 2>/dev/null
+        elif [ "$s_prompt" != "$prompt_id" ]; then
+          base=$s_last
+        else
+          base=$s_base
+        fi
+        # after /compact the context shrinks: count the growth from the compacted size
+        [ "$ctx_n" -lt "$base" ] && base=$ctx_n
+        delta=$(( ctx_n - base ))
+        # write only on change; a failed write never breaks the render
+        if [ "$prompt_id $base $ctx_n" != "$s_prompt $s_base $s_last" ]; then
+          { mkdir -p "$state_dir" && printf '%s %s %s\n' "$prompt_id" "$base" "$ctx_n" > "$state.$$" &&
+            mv -f "$state.$$" "$state"; } 2>/dev/null || rm -f "$state.$$" 2>/dev/null
+        fi
+      fi
+      ;;
+  esac
+
+  # line 3: cntx bar + exact tokens / window size + growth since the previous prompt (one awk call)
+  ctx_info=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v n="$ctx_n" -v d="$delta" -v g="$gray" '
   # thousands separators by hand: the %\047d flag is not portable across awk implementations
-  u = sprintf("%d", n)
-  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+  function group(x,   u) {
+    u = sprintf("%d", x)
+    while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+    return u
+  }
+  BEGIN {
+  col = (n >= 150000 ? "31" : (n >= 100000 ? "33" : "32"))
   t = s / 1000
   t = (t >= 1000 ? sprintf("%.0fM", t/1000) : sprintf("%.0fk", t))
-  printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, u, g, t
+  printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, group(n), g, t
+  if (d > 0) printf "  \033[0;%sm+%s\033[0m %stok\033[0m", col, group(d), g
 }')
   ctx_bar=$(render_bar "cntx" "$used_int")
   [ -z "$session_pct" ] && ctx_info="$ctx_info$cost_str"

@@ -59,6 +59,8 @@ Keep them consistent with the main status line:
 
 The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`).
 
+Releases: a pushed `v*` tag runs `.github/workflows/release.yml`: the snapshot tests, then a GitHub release with `install.sh` as its asset, its default branch set to the tag, so the README command (`releases/latest/download/install.sh`) installs the scripts of that tag. GitHub counts the asset downloads, the only install count there is (raw downloads are not counted): `gh api repos/ihororlovskyi/claude-statusline/releases --jq '[.[].assets[] | select(.name == "install.sh") | .download_count] | add'`. It counts downloads, not successful installs. Tags only after the merge to `main` and only on request.
+
 `install.sh` stays in the repo root and the scripts stay in `scripts/`: the public command `curl -fsSL .../main/install.sh | sh` and the raw paths `scripts/<file>` are already in use on other machines, so renaming or moving them breaks installation.
 
 ## Verifying changes

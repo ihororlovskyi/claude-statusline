@@ -16,6 +16,12 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 ## Install
 
 ```sh
+curl -fsSL https://github.com/ihororlovskyi/claude-statusline/releases/latest/download/install.sh | sh
+```
+
+This installs the latest release. The tip of `main`:
+
+```sh
 curl -fsSL https://raw.githubusercontent.com/ihororlovskyi/claude-statusline/main/install.sh | sh
 ```
 

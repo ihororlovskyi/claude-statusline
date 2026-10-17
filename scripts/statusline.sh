@@ -200,11 +200,12 @@ if [ -n "$used" ]; then
         [ "$ctx_n" -lt "$base" ] && base=$ctx_n
         delta=$(( ctx_n - base ))
         # cost of the current prompt so far; a smaller session cost (a resumed session counts
-        # from zero) lowers the base the same way
+        # from zero) lowers the base the same way; hidden while the base is zero, as it would
+        # repeat the session cost
         cost_info=$(LC_ALL=C awk -v c="$cost_n" -v b="$cbase" -v col="$cyan" 'BEGIN {
           if (c + 0 < b + 0) b = c
           printf "%.6f", b
-          if (c - b >= 0.005) printf "  %s+$%.2f\033[0m", col, c - b
+          if (b > 0 && c - b >= 0.005) printf "  %s+$%.2f\033[0m", col, c - b
         }')
         cbase=${cost_info%%[!0-9.]*}
         cost_delta_str=${cost_info#"$cbase"}

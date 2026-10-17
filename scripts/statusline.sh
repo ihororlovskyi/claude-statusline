@@ -150,8 +150,8 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" 'BEGIN {
     k = split(m, part, "C")
     printf "  "
     for (i = 1; i < k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
-    # the count since the last compaction is white, like the total
-    printf "·\033[0;37m%d", length(part[k])
+    # the count since the last compaction is white, like the total; ·0 right after one stays gray
+    printf "·%s%d", (length(part[k]) > 0 ? "\033[0;37m" : ""), length(part[k])
   }
   printf "\033[0m"
 }')

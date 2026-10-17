@@ -149,7 +149,9 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" 'BEGIN {
   if (seg != "") {
     k = split(m, part, "C")
     printf "  "
-    for (i = 1; i <= k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
+    for (i = 1; i < k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
+    # the count since the last compaction is white, like the total
+    printf "·\033[0;37m%d", length(part[k])
   }
   printf "\033[0m"
 }')
@@ -165,8 +167,10 @@ if [ -n "$used" ]; then
 
   # context growth since the previous prompt: the payload has no prompt boundary, so the
   # promptId of the last user entry in the transcript marks it; per-session state holds
-  # "<promptId> <base> <last>", where base is the context when that prompt started
+  # "<promptId> <base> <last> <cost base> <cost last>", where the bases are the context and the
+  # session cost when that prompt started (older state files have no cost fields)
   delta=0
+  cost_delta_str=""
   case "$session_id" in
     ''|*[!A-Za-z0-9_-]*) ;;
     *)
@@ -177,29 +181,43 @@ if [ -n "$used" ]; then
       if [ -n "$prompt_id" ] && [ "$ctx_n" -gt 0 ]; then
         state_dir="$claude_dir/statusline-state"
         state="$state_dir/$session_id"
-        s_prompt="" s_base="" s_last=""
-        [ -f "$state" ] && read -r s_prompt s_base s_last < "$state" 2>/dev/null
+        # fixed-point: jq prints tiny costs in exponent form
+        cost_n=$(LC_ALL=C awk -v c="${cost_usd:-0}" 'BEGIN { printf "%.6f", (c + 0 > 0 ? c : 0) }')
+        s_prompt="" s_base="" s_last="" s_cbase="" s_clast=""
+        [ -f "$state" ] && read -r s_prompt s_base s_last s_cbase s_clast < "$state" 2>/dev/null
         case "$s_base$s_last" in ''|*[!0-9]*) s_prompt="" ;; esac
+        case "$s_cbase$s_clast" in *[!0-9.]*) s_cbase="" s_clast="" ;; esac
         if [ -z "$s_prompt" ]; then
-          base=$ctx_n
+          base=$ctx_n cbase=$cost_n
           # a new session file: drop the ones idle for a week
           find "$state_dir" -type f -mtime +7 -delete 2>/dev/null
         elif [ "$s_prompt" != "$prompt_id" ]; then
-          base=$s_last
+          base=$s_last cbase=${s_clast:-$cost_n}
         else
-          base=$s_base
+          base=$s_base cbase=${s_cbase:-$cost_n}
         fi
         # after /compact the context shrinks: count the growth from the compacted size
         [ "$ctx_n" -lt "$base" ] && base=$ctx_n
         delta=$(( ctx_n - base ))
+        # cost of the current prompt so far; a smaller session cost (a resumed session counts
+        # from zero) lowers the base the same way
+        cost_info=$(LC_ALL=C awk -v c="$cost_n" -v b="$cbase" -v col="$cyan" 'BEGIN {
+          if (c + 0 < b + 0) b = c
+          printf "%.6f", b
+          if (c - b >= 0.005) printf "  %s+$%.2f\033[0m", col, c - b
+        }')
+        cbase=${cost_info%%[!0-9.]*}
+        cost_delta_str=${cost_info#"$cbase"}
         # write only on change; a failed write never breaks the render
-        if [ "$prompt_id $base $ctx_n" != "$s_prompt $s_base $s_last" ]; then
-          { mkdir -p "$state_dir" && printf '%s %s %s\n' "$prompt_id" "$base" "$ctx_n" > "$state.$$" &&
+        if [ "$prompt_id $base $ctx_n $cbase $cost_n" != "$s_prompt $s_base $s_last $s_cbase $s_clast" ]; then
+          { mkdir -p "$state_dir" &&
+            printf '%s %s %s %s %s\n' "$prompt_id" "$base" "$ctx_n" "$cbase" "$cost_n" > "$state.$$" &&
             mv -f "$state.$$" "$state"; } 2>/dev/null || rm -f "$state.$$" 2>/dev/null
         fi
       fi
       ;;
   esac
+  [ -n "$cost_str" ] && cost_str="$cost_str$cost_delta_str"
 
   now=$(date +%s)
 

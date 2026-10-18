@@ -105,10 +105,11 @@ gh_slug() {
     sed 's/\.git$//'
 }
 
-# " · PR #N" for a PR number and state; state words follow pr.review_state, plus merged/closed
+# " · PR #N" for a PR number and state; state words follow pr.review_state, plus merged/closed.
+# Colors follow the footer badge: gray "PR", the number yellow while waiting for review
 pr_label() {
   case "$1" in ''|*[!0-9]*) return ;; esac
-  col=37 suffix=""
+  col=33 suffix=""
   case "$2" in
     approved) col=32 ;;
     changes_requested) col=31 ;;
@@ -116,7 +117,7 @@ pr_label() {
     merged) col=35 suffix=" merged" ;;
     closed) col=90 suffix=" closed" ;;
   esac
-  printf " ${gray}·\033[0m \033[0;%sm%s #%s%s\033[0m" "$col" "${3:-PR}" "$1" "$suffix"
+  printf " ${gray}· %s\033[0m \033[0;%sm#%s%s\033[0m" "${3:-PR}" "$col" "$1" "$suffix"
 }
 
 # PR cache, one "<owner/repo> <branch> <checked> <number|-> <state|->" line per branch; the
@@ -264,11 +265,12 @@ while IFS= read -r root; do
   [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
   repo_pr=""
   [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
-  printf "${gray}↳\033[0m  $cyan%s\033[0m ${gray}·\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+  # "   ↳" puts the arrow under the repo name of line 1
+  printf "   ${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
 done <<EOF
 $roots
 EOF
-[ "$more" -gt 0 ] && printf "${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
+[ "$more" -gt 0 ] && printf "   ${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
 
 # line 2: thinking + skills estimate + prompts
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from

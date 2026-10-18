@@ -19,7 +19,11 @@ trap 'rm -rf "$tmp"' EXIT
 repo_dir=$(cd "$(dirname "$0")" 2> /dev/null && pwd || echo "")
 if [ -n "$repo_dir" ] && [ -f "$repo_dir/install.sh" ] && [ -f "$repo_dir/scripts/statusline.sh" ]; then
   for f in $FILES; do cp "$repo_dir/scripts/$f" "$tmp/$f"; done
+  # the tag, or how far the clone is past it (v0.0.10-2-gabc1234-dirty)
+  version=$(git -C "$repo_dir" describe --tags --always --dirty 2> /dev/null || echo "local clone")
 else
+  # the release asset has its tag here, a raw install.sh the branch it came from
+  version=$BRANCH
   for f in $FILES; do
     curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/scripts/$f" -o "$tmp/$f"
   done
@@ -60,4 +64,4 @@ elif ! jq -e '.prStatusFooterEnabled == false' "$GLOBAL" > /dev/null 2>&1; then
   mv "$tmp/claude.json" "$GLOBAL"
   echo "set prStatusFooterEnabled: false in $GLOBAL (backup: $GLOBAL.bak)"
 fi
-echo "done - restart Claude Code to pick up the status line"
+echo "done - claude-statusline $version installed, restart Claude Code to pick up the status line"

@@ -10,8 +10,8 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
 
-↳ rc-qa  Sonnet 5.5 high  6,512 tok  $0.02  Running ping in foreground
-↳ Explore  Haiku 4.5  12,104 tok  $0.01  explorer
+↳ rc-verifier  Opus 5.5 low  6,512 tok  $0.05  Running ping in foreground
+↳ Explore  Haiku 5.5  12,104 tok  $0.01  explorer
 ```
 
 ## Install
@@ -20,16 +20,16 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 curl -fsSL https://github.com/ihororlovskyi/claude-statusline/releases/latest/download/install.sh | sh
 ```
 
-This installs the latest release. The tip of `main`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/ihororlovskyi/claude-statusline/main/install.sh | sh
-```
+This installs the latest release.
 
 From a local clone:
 
 ```sh
+git clone https://github.com/ihororlovskyi/claude-statusline.git your-dir-name
+cd your-dir-name
 sh install.sh
+# or, without cd
+sh your-dir-name/install.sh
 ```
 
 The installer:
@@ -49,6 +49,8 @@ The installer:
 ```
 
 - turns off the PR badge in the prompt footer, as the status line shows the PR itself: sets `"prStatusFooterEnabled": false` in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when it is set; previous file saved as `.claude.json.bak`, other keys are kept). A missing file is not created, the installer only warns. To bring the badge back, turn on **Show PR status footer** in `/config`.
+
+The last line names what was installed: the release tag (`done - claude-statusline v0.0.11 installed, ...`), or for a clone `git describe` of it (`v0.0.11-2-gabc1234-dirty`).
 
 Restart Claude Code afterwards. `CLAUDE_CONFIG_DIR` is respected.
 
@@ -78,7 +80,7 @@ Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate
 ➜  my-project git:(main) ✗  Opus 5.5 medium
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88  +$0.12
-      rest:█░░░░░░░░░ 12%  27d 4h 24m
+      rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
 ```
 
 The session cost (on the `used` line when it is shown, else on the `cntx` line) is still an API-price estimate from Claude Code, not your contract price.
@@ -86,8 +88,9 @@ The session cost (on the `used` line when it is shown, else on the `cntx` line) 
 If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-fetch.js`, not part of this repo, refreshed in the background every 5 minutes), a monthly spend bar is added above `rest`:
 
 ```
-      used:████░░░░░░ 42%  $210.00/$500
-      rest:█░░░░░░░░░ 12%  27d 4h 24m
+      cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
+      used:████░░░░░░ 42%  $210.00/$500  $0.88  +$0.12
+      rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
 ```
 
 Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_minor", "exponent"}, "limit": {"amount_minor", "exponent"}, "percent"}}}`. A cache older than 24 hours is ignored.
@@ -96,7 +99,7 @@ Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_m
 
 One row per running agent: agent type, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
 
-- The agent type (`rc-qa`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript; the default `general-purpose` and `fork` are not shown, and without the file the row starts with the model.
+- The agent type (`rc-verifier`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript; the default `general-purpose` and `fork` are not shown, and without the file the row starts with the model.
 
 - Effort is the level the agent actually runs with, read from its transcript: the `effort` in the agent's `.claude/agents/*.md` frontmatter, otherwise the session's. Asking for an effort in the prompt text does not change it. Models without effort (Haiku) show none.
 

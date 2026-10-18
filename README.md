@@ -3,7 +3,8 @@
 Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel.
 
 ```
-➜  my-project git:(main) ✗  Opus 5.5 medium
+➜  my-project git:(main) ✗  Opus 5.5 medium · PR #11
+↳  acme/skills · git:(dev) ✗ · PR #109
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
@@ -47,15 +48,19 @@ The installer:
 }
 ```
 
+- turns off the PR badge in the prompt footer, as the status line shows the PR itself: sets `"prStatusFooterEnabled": false` in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when it is set; previous file saved as `.claude.json.bak`, other keys are kept). A missing file is not created, the installer only warns. To bring the badge back, turn on **Show PR status footer** in `/config`.
+
 Restart Claude Code afterwards. `CLAUDE_CONFIG_DIR` is respected.
 
-Requirements: `jq`, `curl`, `awk` (macOS defaults are fine).
+Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) for PR numbers of repos other than the current one.
 
 ## What it shows
 
 **Main status line**
 
-- directory, git branch with dirty marker, model and effort level (omitted for models without effort);
+- directory, git branch with dirty marker, model and effort level (omitted for models without effort), then the pull request of the branch (`· PR #11`; `MR` for a GitLab merge request);
+- one `↳` line per other git repo the session edited (`Edit`, `Write` and `NotebookEdit` calls of the session and its agents; edits made through shell commands are not seen): `owner/repo` of its GitHub `origin` (the owner is dropped when it matches the current repo's, the folder name without a GitHub remote), branch (a short hash on a detached HEAD), dirty marker and PR. At most 3 lines, then `↳  +N repos`. A path through a symlink counts as the repo it points to;
+- the PR color shows its state: green approved, red changes requested, white waiting for review, gray `draft` and `closed`, magenta `merged`. The current repo's PR comes from Claude Code (the same data as the footer badge); otherwise, and for the other repos, from `gh pr list`, run in the background at most every 5 minutes per branch with the first logged-in `gh` account that can read the repo (`GH_ACC` from the repo's `.env/.env` first, then the active account), so a new PR shows up on a later render;
 - thinking mode (`thnk:on` / `off`, `no` when unknown);
 - next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
 - context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;

@@ -9,6 +9,7 @@ eval "$(echo "$input" | jq -r '
   def num: if type == "number" then tostring else "" end;
   def int: if type == "number" and . >= 0 and . < 1e12 then floor | tostring else "" end;
   def pct: if type == "number" and . > -1e9 and . < 1e9 then round | tostring else "" end;
+  def pr: .pr | if type == "object" then . else {} end;
   "cwd="          + (.cwd | str | @sh),
   "session_id="   + (.session_id | str | @sh),
   "transcript="   + (.transcript_path | str | @sh),
@@ -24,7 +25,10 @@ eval "$(echo "$input" | jq -r '
   "session_pct="  + (.rate_limits.five_hour.used_percentage | pct | @sh),
   "session_reset="+ (.rate_limits.five_hour.resets_at | int | @sh),
   "weekly_pct="   + (.rate_limits.seven_day.used_percentage | pct | @sh),
-  "weekly_reset=" + (.rate_limits.seven_day.resets_at | int | @sh)
+  "weekly_reset=" + (.rate_limits.seven_day.resets_at | int | @sh),
+  "pr_number="    + (pr.number | int | @sh),
+  "pr_state="     + (pr.review_state | str | select(test("^[a-z_]*$")) // "" | @sh),
+  "pr_kind="      + (pr.kind | str | select(. == "mr") // "" | @sh)
 ')"
 
 claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -36,13 +40,15 @@ dir=$(basename "$cwd")
 
 # git branch + dirty state
 # symbolic-ref prints nothing outside a repo or on a detached HEAD
+# " git:(<branch>) ✗" for the repo at $1
+git_label() {
+  dirty=""
+  [ -n "$(git -C "$1" --no-optional-locks status --porcelain 2>/dev/null)" ] && dirty="\033[0;33m ✗"
+  printf " \033[1;34mgit:(\033[0;31m%s\033[1;34m)$dirty\033[0m" "$2"
+}
 git_info=""
 branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
-if [ -n "$branch" ]; then
-  dirty=""
-  [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ] && dirty="\033[0;33m ✗"
-  git_info=$(printf " \033[1;34mgit:(\033[0;31m%s\033[1;34m)$dirty\033[0m" "$branch")
-fi
+[ -n "$branch" ] && git_info=$(git_label "$cwd" "$branch")
 
 # labelled progress bar
 render_bar() {
@@ -86,7 +92,183 @@ cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" -v col="$cyan" 'BEGIN { if (c + 0 
 if [ -z "$used" ] && [ -n "$cost_usd" ]; then
   model_str="$model_str$cost_str"
 fi
-printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s\n" "$dir" "$git_info" "$model_str"
+nl='
+'
+state_dir="$claude_dir/statusline-state"
+session_ok=""
+case "$session_id" in ''|*[!A-Za-z0-9_-]*) ;; *) session_ok=1 ;; esac
+
+# owner/repo of the origin remote on GitHub (an ssh alias like github-work counts), else nothing
+gh_slug() {
+  git -C "$1" --no-optional-locks remote get-url origin 2>/dev/null | sed -nE \
+    's#^(https://|ssh://)?([^@/]+@)?github(\.com|-[A-Za-z0-9_-]+)[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$#\4/\5#p' |
+    sed 's/\.git$//'
+}
+
+# " · PR #N" for a PR number and state; state words follow pr.review_state, plus merged/closed
+pr_label() {
+  case "$1" in ''|*[!0-9]*) return ;; esac
+  col=37 suffix=""
+  case "$2" in
+    approved) col=32 ;;
+    changes_requested) col=31 ;;
+    draft) col=90 suffix=" draft" ;;
+    merged) col=35 suffix=" merged" ;;
+    closed) col=90 suffix=" closed" ;;
+  esac
+  printf " ${gray}·\033[0m \033[0;%sm%s #%s%s\033[0m" "$col" "${3:-PR}" "$1" "$suffix"
+}
+
+# PR cache, one "<owner/repo> <branch> <checked> <number|-> <state|->" line per branch; the
+# render never waits for gh: a stale entry is stamped as checked and refreshed in the background
+pr_cache="$state_dir/pr-cache"
+pr_store() {
+  { mkdir -p "$state_dir" && t=$(mktemp "$pr_cache.XXXXXX") &&
+    { [ -f "$pr_cache" ] && LC_ALL=C awk -v s="$1" -v b="$2" -v now="$3" \
+        '!($1 == s && $2 == b) && now - $3 < 604800' "$pr_cache"
+      printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5"; } > "$t" &&
+    mv -f "$t" "$pr_cache"; } 2>/dev/null || rm -f "$t" 2>/dev/null
+}
+# runs in the background: the first account that can read the repo answers (GH_ACC from the
+# repo's .env/.env, then the active gh account, then the others); a token in the environment wins
+pr_fetch() {
+  command -v gh > /dev/null 2>&1 || return
+  logins="-"
+  if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+    logins=$({ sed -n 's/^GH_ACC=\([A-Za-z0-9-]*\)$/\1/p' "$3/.env/.env" 2>/dev/null | head -n 1
+      gh auth status --hostname github.com --json hosts \
+        --jq '.hosts["github.com"] | sort_by(.active | not) | .[].login' 2>/dev/null; } |
+      grep -E '^[A-Za-z0-9-]+$' | awk '!seen[$0]++')
+    [ -n "$logins" ] || logins="-"
+  fi
+  for login in $logins; do
+    token=""
+    [ "$login" = "-" ] || token=$(gh auth token --hostname github.com --user "$login" 2>/dev/null) || continue
+    out=$(GH_TOKEN=${token:-${GH_TOKEN:-}} gh pr list --repo "$1" --head "$2" --state all --limit 1 \
+      --json number,state,isDraft,reviewDecision 2>/dev/null) || continue
+    res=$(printf '%s' "$out" | jq -r '.[0] // empty |
+      [(.number | tostring),
+       (if .state == "MERGED" then "merged" elif .state == "CLOSED" then "closed"
+        elif .isDraft then "draft" elif .reviewDecision == "APPROVED" then "approved"
+        elif .reviewDecision == "CHANGES_REQUESTED" then "changes_requested" else "pending" end)]
+      | join(" ")' 2>/dev/null) || continue
+    [ -n "$res" ] || res="- -"
+    pr_store "$1" "$2" "$(date +%s)" $res
+    return
+  done
+}
+# " · PR #N" of <owner/repo> <branch> <root> from the cache
+pr_cached() {
+  [ -n "$1" ] && [ -n "$2" ] || return
+  line=""
+  [ -f "$pr_cache" ] && line=$(LC_ALL=C awk -v s="$1" -v b="$2" '$1 == s && $2 == b { print; exit }' "$pr_cache")
+  set -- "$1" "$2" "$3" $line
+  checked=${6:-0}
+  case "$checked" in *[!0-9]*) checked=0 ;; esac
+  now_pr=$(date +%s)
+  if [ $(( now_pr - checked )) -gt 300 ]; then
+    pr_store "$1" "$2" "$now_pr" "${7:--}" "${8:--}"
+    ( pr_fetch "$1" "$2" "$3" ) < /dev/null > /dev/null 2>&1 &
+  fi
+  pr_label "${7:-}" "${8:-}"
+}
+
+cwd_root=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+cwd_slug=""
+[ -n "$cwd_root" ] && cwd_slug=$(gh_slug "$cwd_root")
+# PR of the cwd branch: the payload mirrors the footer badge; without it (no gh check, or the
+# PR merged or closed) the cache
+if [ -n "$pr_number" ]; then
+  pr_str=$(pr_label "$pr_number" "$pr_state" "$([ "$pr_kind" = mr ] && echo MR)")
+elif [ -n "$branch" ]; then
+  pr_str=$(pr_cached "$cwd_slug" "$branch" "$cwd_root")
+else
+  pr_str=""
+fi
+
+# repos the session edited: Edit/Write/NotebookEdit paths in the session transcript and its
+# agent transcripts, read incrementally. State "<session_id>.repos": "o <offset> <file>" per
+# transcript, up to the end of its last complete line, then "r <root>" per repo in first-edit order
+roots=""
+if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
+  repos_state="$state_dir/$session_id.repos"
+  old_state=""
+  [ -f "$repos_state" ] && old_state=$(cat "$repos_state" 2>/dev/null)
+  roots=$(printf '%s\n' "$old_state" | sed -n 's/^r //p')
+  offsets=""
+  for f in "$transcript" "${transcript%.jsonl}"/subagents/agent-*.jsonl; do
+    [ -f "$f" ] || continue
+    size=$(wc -c < "$f" | tr -d ' ')
+    off=$(printf '%s\n' "$old_state" | F="$f" LC_ALL=C awk '
+      /^o / { p = substr($0, length($1) + length($2) + 3); if (p == ENVIRON["F"]) { print $2; exit } }')
+    case "$off" in ''|*[!0-9]*) off=0 ;; esac
+    # a smaller file is a new transcript
+    [ "$size" -lt "$off" ] && off=0
+    if [ "$size" -gt "$off" ]; then
+      # at most 16 MB per file and render: a resumed 120 MB transcript took 5 s in one pass
+      chunk=$(( size - off ))
+      [ "$chunk" -gt 16777216 ] && chunk=16777216
+      # records count bytes (LC_ALL=C); a last record without its newline is half-written (or
+      # cut by the chunk) and stays for the next render
+      out=$(tail -c +$(( off + 1 )) "$f" 2>/dev/null | head -c "$chunk" | LC_ALL=C awk -v w="$chunk" '
+        function emit(r) { if (r ~ /"name":"(Edit|Write|NotebookEdit)"/) print "L" r }
+        NR > 1 { emit(prev) }
+        { prev = $0; n += length($0) + 1 }
+        END {
+          if (NR > 0) { if (n == w) emit(prev); else n -= length(prev) + 1 }
+          print "N" n + 0
+        }')
+      read_n=$(printf '%s\n' "$out" | sed -n 's/^N\([0-9][0-9]*\)$/\1/p' | tail -n 1)
+      read_n=${read_n:-0}
+      # a single line longer than the chunk: skip it rather than stall
+      [ "$read_n" -eq 0 ] && [ "$chunk" -eq 16777216 ] && read_n=$chunk
+      off=$(( off + read_n ))
+      dirs=$(printf '%s\n' "$out" | sed -n 's/^L//p' | jq -rR '
+        fromjson? | select(type == "object" and .type == "assistant") | .message.content[]? |
+        select(type == "object" and .type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "NotebookEdit")) |
+        (.input.file_path // .input.notebook_path) | strings | select(startswith("/") and (contains("\n") | not))' 2>/dev/null |
+        sed 's#/[^/]*$##' | awk '!seen[$0]++')
+      while IFS= read -r d; do
+        [ -n "$d" ] || d=/
+        # the file may be gone or not created yet: the nearest existing parent
+        while [ ! -d "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
+        # a symlinked path resolves to the physical clone, so both spellings give one root
+        root=$(git -C "$d" --no-optional-locks rev-parse --show-toplevel 2>/dev/null) || continue
+        case "$nl$roots$nl" in *"$nl$root$nl"*) ;; *) roots="${roots:+$roots$nl}$root" ;; esac
+      done <<EOF
+$dirs
+EOF
+    fi
+    offsets="$offsets${nl}o $off $f"
+  done
+  new_state=$(printf '%s\n' "${offsets#"$nl"}"; [ -n "$roots" ] && printf '%s\n' "$roots" | sed 's/^/r /')
+  if [ "$new_state" != "$old_state" ]; then
+    { mkdir -p "$state_dir" && printf '%s\n' "$new_state" > "$repos_state.$$" &&
+      mv -f "$repos_state.$$" "$repos_state"; } 2>/dev/null || rm -f "$repos_state.$$" 2>/dev/null
+  fi
+fi
+
+printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$model_str" "$pr_str"
+
+# one line per other repo the session edited, at most 3, then "+N repos"
+shown=0 more=0
+while IFS= read -r root; do
+  [ -n "$root" ] && [ "$root" != "$cwd_root" ] && [ -d "$root" ] || continue
+  br=$(git -C "$root" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
+  label=$br
+  [ -n "$label" ] || label=$(git -C "$root" --no-optional-locks rev-parse --short HEAD 2>/dev/null) || continue
+  if [ "$shown" -ge 3 ]; then more=$(( more + 1 )); continue; fi
+  shown=$(( shown + 1 ))
+  slug=$(gh_slug "$root")
+  name=${slug:-$(basename "$root")}
+  [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
+  repo_pr=""
+  [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
+  printf "${gray}↳\033[0m  $cyan%s\033[0m ${gray}·\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+done <<EOF
+$roots
+EOF
+[ "$more" -gt 0 ] && printf "${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
 
 # line 2: thinking + skills estimate + prompts
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from

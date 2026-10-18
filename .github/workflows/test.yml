@@ -13,17 +13,20 @@ jobs:
       - uses: actions/checkout@v5
       - run: bash tests/run.sh
       # twice over a changed script: the second run must back it up; a space in the dir
-      # checks that the commands written to settings.json still run
+      # checks that the commands written to settings.json still run; the first run has no
+      # .claude.json to change, the second turns off the footer PR badge and keeps other keys
       - name: install.sh
         run: |
           export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude config"
           sh install.sh
           echo '# changed' >> "$CLAUDE_CONFIG_DIR/statusline.sh"
+          echo '{"numStartups":1,"prStatusFooterEnabled":true}' > "$CLAUDE_CONFIG_DIR/.claude.json"
           sh install.sh
           grep -q '^# changed$' "$CLAUDE_CONFIG_DIR/statusline.sh.bak"
           cmp scripts/statusline.sh "$CLAUDE_CONFIG_DIR/statusline.sh"
           settings="$CLAUDE_CONFIG_DIR/settings.json"
           jq -e '.statusLine.type == "command" and .subagentStatusLine.type == "command"' "$settings"
+          jq -e '.prStatusFooterEnabled == false and .numStartups == 1' "$CLAUDE_CONFIG_DIR/.claude.json"
           sh -c "$(jq -r .statusLine.command "$settings")" < tests/cases/pro-full.json | grep -q .
           sh -c "$(jq -r .subagentStatusLine.command "$settings")" < tests/cases/panel-rows.json | grep -q .
 

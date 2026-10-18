@@ -1,0 +1,8 @@
+{"type":"user","message":{"role":"user","content":"edit the repos"},"promptId":"p1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/app/a.txt"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/link-sib/x.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"@tmp@/sib/y.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"@tmp@/nogit/z.txt"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"@tmp@/other/new/dir/file.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"NotebookEdit","input":{"notebook_path":"@tmp@/plain/n.ipynb"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/detached/d.txt"}}]}}

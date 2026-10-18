@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"few"},"promptId":"p1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/sib/x.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/wip/w.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"@tmp@/extra/e.txt"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/plain/p.md"}}]}}

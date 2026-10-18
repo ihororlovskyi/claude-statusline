@@ -249,7 +249,9 @@ EOF
   fi
 fi
 
-printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$model_str" "$pr_str"
+# the PR follows the branch it belongs to; a gray dot then separates it from the model
+[ -n "$pr_str" ] && [ -n "$model_str" ] && model_str=$(printf " ${gray}·\033[0m %s" "${model_str#  }")
+printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$pr_str" "$model_str"
 
 # one line per other repo the session edited, at most 3, then "+N repos"
 shown=0 more=0
@@ -265,12 +267,13 @@ while IFS= read -r root; do
   [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
   repo_pr=""
   [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
-  # "   ↳" puts the arrow under the repo name of line 1
-  printf "   ${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+  # "   ↳" puts the arrow under the repo name of line 1. Claude Code trims leading whitespace of
+  # each line, so a reset code goes first to keep the spaces
+  printf "\033[0m   ${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
 done <<EOF
 $roots
 EOF
-[ "$more" -gt 0 ] && printf "   ${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
+[ "$more" -gt 0 ] && printf "\033[0m   ${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
 
 # line 2: thinking + skills estimate + prompts
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from

@@ -3,7 +3,7 @@
 Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel.
 
 ```
-➜  my-project git:(main) ✗  Opus 5.5 medium · PR #11
+➜  my-project git:(main) ✗ · PR #11 · Opus 5.5 medium
    ↳  acme/skills git:(dev) ✗ · PR #109
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
@@ -58,7 +58,7 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 
 **Main status line**
 
-- directory, git branch with dirty marker, model and effort level (omitted for models without effort), then the pull request of the branch (`· PR #11`; `MR` for a GitLab merge request);
+- directory, git branch with dirty marker, the pull request of the branch (`· PR #11`; `MR` for a GitLab merge request), then model and effort level (omitted for models without effort);
 - one `↳` line per other git repo the session edited (`Edit`, `Write` and `NotebookEdit` calls of the session and its agents; edits made through shell commands are not seen): `owner/repo` of its GitHub `origin` (the owner is dropped when it matches the current repo's, the folder name without a GitHub remote), branch (a short hash on a detached HEAD), dirty marker and PR. At most 3 lines, then `↳  +N repos`. A path through a symlink counts as the repo it points to;
 - `PR` is gray and the number shows the state, as in the footer badge: yellow waiting for review, green approved, red changes requested, gray `draft` and `closed`, magenta `merged`. The current repo's PR comes from Claude Code (the same data as the footer badge); otherwise, and for the other repos, from `gh pr list`, run in the background at most every 5 minutes per branch with the first logged-in `gh` account that can read the repo (`GH_ACC` from the repo's `.env/.env` first, then the active account), so a new PR shows up on a later render;
 - thinking mode (`thnk:on` / `off`, `no` when unknown);

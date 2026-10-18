@@ -1,8 +1,8 @@
-[1;32m➜[0m  [0;36mapp[0m [1;34mgit:([0;31mfeature[1;34m)[0m  [0;35mOpus 5.5[0m [0;35mmedium[0m [0;90m·[0m [0;37mPR #7[0m
-[0;90m↳[0m  [0;36mlib[0m [0;90m·[0m [1;34mgit:([0;31mdev[1;34m)[0;33m ✗[0m [0;90m·[0m [0;32mPR #5[0m
-[0;90m↳[0m  [0;36msentimony/skills[0m [0;90m·[0m [1;34mgit:([0;31mdev[1;34m)[0m [0;90m·[0m [0;35mPR #109 merged[0m
-[0;90m↳[0m  [0;36mplain[0m [0;90m·[0m [1;34mgit:([0;31mmain[1;34m)[0m
-[0;90m↳  +2 repos[0m
+[1;32m➜[0m  [0;36mapp[0m [1;34mgit:([0;31mfeature[1;34m)[0m  [0;35mOpus 5.5[0m [0;35mmedium[0m [0;90m· PR[0m [0;33m#7[0m
+   [0;90m↳[0m  [0;36mlib[0m [1;34mgit:([0;31mdev[1;34m)[0;33m ✗[0m [0;90m· PR[0m [0;32m#5[0m
+   [0;90m↳[0m  [0;36msentimony/skills[0m [1;34mgit:([0;31mdev[1;34m)[0m [0;90m· PR[0m [0;35m#109 merged[0m
+   [0;90m↳[0m  [0;36mplain[0m [1;34mgit:([0;31mmain[1;34m)[0m
+   [0;90m↳  +2 repos[0m
       [0;90mthnk:[0m[0;36mon[0m[0;90m  skll: ~200 tok ~0.1%[0m  [0;37m1[0m [0;90mprompt[0m
       [0;90mcntx:[0m[0;32m░░░░░░░░░░[0m [0;37m5%[0m  [0;32m10,000[0m [0;90mtok /200k[0m
       [0;90mrest: <date-dependent>

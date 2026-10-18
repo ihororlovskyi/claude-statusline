@@ -23,7 +23,8 @@ while IFS="$(printf '\037')" read -r id status task; do
     def commas: if test("^[0-9]{4}") then (.[:-3] | commas) + "," + .[-3:] else . end;
     # USD per MTok: input, 5m write, 1h write, cache read, output
     # (https://platform.claude.com/docs/en/about-claude/pricing)
-    def price:
+    # $prompt: input + cache write + cache read tokens of the request; Haiku 5.5 costs more over 100k
+    def price($prompt):
       sub("^claude-"; "") as $m
       | if   $m | test("^(fable|mythos)-5-1") then [10, 12.5, 20, 0.25, 50]
         elif $m | test("^(fable|mythos)-5")   then [10, 12.5, 20, 1, 50]
@@ -32,6 +33,7 @@ while IFS="$(printf '\037')" read -r id status task; do
         elif $m | test("^opus-")              then [5, 6.25, 10, 0.5, 25]
         elif $m | test("^sonnet-5")           then [2, 2.5, 4, 0.2, 10]
         elif $m | test("^sonnet-")            then [3, 3.75, 6, 0.3, 15]
+        elif $m | test("^haiku-5-5") then (if $prompt > 100000 then [0.5, 0.625, 1, 0.05, 2.5] else [0.1, 0.125, 0.2, 0.01, 0.5] end)
         elif $m | test("^haiku-4-5")          then [1, 1.25, 2, 0.1, 5]
         else [0, 0, 0, 0, 0] end;
     # empty content hides finished/idle rows
@@ -47,8 +49,9 @@ while IFS="$(printf '\037')" read -r id status task; do
     | ([$a[].effort | strings] | last // "") as $effort
     # payload has no cost; price the transcript usage, deduplicated by message id
     | (try ([$a[].message | objects | select(.usage)] | unique_by(.id) | map(
-        (.model // "" | price) as $p
-        | .usage as $u
+        .usage as $u
+        | (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) as $prompt
+        | (.model // "" | price($prompt)) as $p
         | ($u.cache_creation.ephemeral_1h_input_tokens // 0) as $w1h
         | (($u.cache_creation_input_tokens // 0) - $w1h) as $w5m
         | (if $u.speed == "fast" then 2 else 1 end) * (if $u.inference_geo == "us" then 1.1 else 1 end) as $mult

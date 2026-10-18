@@ -3,6 +3,8 @@
 {"id":"a2","status":"running","label":"haiku\nwith newline","tokenCount":100000,"model":"claude-haiku-4-5-20251001"},
 {"id":"a3","status":"running","description":"model from transcript, nested effort ignored","tokenCount":99999},
 {"id":"a4","status":"running","label":"half cent $0.125 rounds up","tokenCount":125000,"model":"claude-haiku-4-5-20251001"},
+{"id":"a5","status":"running","label":"haiku 5.5 under 100k: $0.02","tokenCount":110000,"model":"claude-haiku-5-5"},
+{"id":"a6","status":"running","label":"haiku 5.5 prompt over 100k with cache reads: $0.06, not $0.01","tokenCount":170000,"model":"claude-haiku-5-5"},
 {"id":"done","status":"completed","label":"finished row is hidden"},
 {"id":"nofile","status":"running","label":"no transcript","tokenCount":1234567,"model":"claude-opus-4-8"},
 {"id":"other","status":"running","label":"unknown model","model":"gpt-x"},

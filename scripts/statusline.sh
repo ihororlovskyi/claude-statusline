@@ -253,27 +253,21 @@ fi
 [ -n "$pr_str" ] && [ -n "$model_str" ] && model_str=$(printf " ${gray}·\033[0m %s" "${model_str#  }")
 printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$pr_str" "$model_str"
 
-# one line per other repo the session edited, at most 3, then "+N repos"
-shown=0 more=0
+# one line per other repo the session edited
 while IFS= read -r root; do
   [ -n "$root" ] && [ "$root" != "$cwd_root" ] && [ -d "$root" ] || continue
   br=$(git -C "$root" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
   label=$br
   [ -n "$label" ] || label=$(git -C "$root" --no-optional-locks rev-parse --short HEAD 2>/dev/null) || continue
-  if [ "$shown" -ge 3 ]; then more=$(( more + 1 )); continue; fi
-  shown=$(( shown + 1 ))
   slug=$(gh_slug "$root")
   name=${slug:-$(basename "$root")}
   [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
   repo_pr=""
   [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
-  # "   ↳" puts the arrow under the repo name of line 1. Claude Code trims leading whitespace of
-  # each line, so a reset code goes first to keep the spaces
-  printf "\033[0m   ${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+  printf "${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
 done <<EOF
 $roots
 EOF
-[ "$more" -gt 0 ] && printf "\033[0m   ${gray}↳  +%s %s\033[0m\n" "$more" "$([ "$more" -eq 1 ] && echo repo || echo repos)"
 
 # line 2: thinking + skills estimate + prompts
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from
@@ -313,17 +307,27 @@ esac
 
 # prompts in the session: P per prompt, C per compaction, in transcript order. Tool results,
 # meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
-# summaries and /compact itself are user entries too, but not prompts
-marks=""
-[ -f "$transcript" ] && marks=$(grep -E '"type":"(user|system)"' "$transcript" 2>/dev/null | jq -rR '
-  fromjson? | select(type == "object") |
-  if .type == "system" then select(.subtype == "compact_boundary") | "C"
-  elif .type != "user" or .isMeta == true or .isCompactSummary == true or .isSidechain == true then empty
-  else .message.content |
-    if type == "string" then select(startswith("<") or startswith("/compact") | not) | "P"
-    elif type == "array" then select(map(.type?) | index("tool_result") | not) | "P"
-    else empty end
-  end' 2>/dev/null | tr -d '\n')
+# summaries and /compact itself are user entries too, but not prompts. The same pass sums the
+# turn_duration entries Claude Code writes when a turn ends: "<sum ms> <last ms> <start|->",
+# where start is the epoch of a prompt whose turn is still running
+marks="" turns=""
+[ -f "$transcript" ] && scan=$(grep -E '"type":"(user|system)"' "$transcript" 2>/dev/null | jq -nrR '
+  [inputs | fromjson? | select(type == "object") |
+    if .type == "system" then
+      if .subtype == "compact_boundary" then {k: "C"}
+      elif .subtype == "turn_duration" then
+        {k: "T", ms: (.durationMs | if type == "number" and . >= 0 then floor else 0 end)}
+      else empty end
+    elif .type != "user" or .isMeta == true or .isCompactSummary == true or .isSidechain == true then empty
+    else (.timestamp | if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end) as $at |
+      .message.content |
+      if type == "string" then select(startswith("<") or startswith("/compact") | not) | {k: "P", at: $at}
+      elif type == "array" then select(map(.type?) | index("tool_result") | not) | {k: "P", at: $at}
+      else empty end
+    end] |
+  (map(select(.k != "T") | .k) | join("")),
+  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
+' 2>/dev/null) && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
 # "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one
 prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" 'BEGIN {
   p = gsub(/P/, "P", m)
@@ -451,6 +455,23 @@ EOF
   printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, group(n), g, t
   if (d > 0) printf "  \033[0;%sm+%s\033[0m %stok\033[0m", col, group(d), g
 }')
+  # agent time: the finished turns plus a running one, then "+" the running or last turn
+  time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" '
+  function fmt(x) {
+    x = int(x)
+    if (x >= 3600) return sprintf("%dh %dm", x / 3600, (x % 3600) / 60)
+    if (x >= 60) return sprintf("%dm %ds", x / 60, x % 60)
+    return sprintf("%ds", x)
+  }
+  BEGIN {
+    if (split(t, f, " ") < 3) exit
+    sum = f[1] / 1000; last = f[2] / 1000
+    if (f[3] != "-" && now >= f[3] + 0) { last = now - f[3]; sum += last }
+    if (sum < 1) exit
+    printf "  \033[0;37m%s\033[0m", fmt(sum)
+    if (last >= 1) printf "  \033[0;37m+%s\033[0m", fmt(last)
+  }')
+  ctx_info="$ctx_info$time_str"
   ctx_bar=$(render_bar "cntx" "$used_int")
   # without a sess line the cost goes on the used line, else here
   [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"

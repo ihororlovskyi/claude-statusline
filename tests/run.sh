@@ -3,7 +3,8 @@
 # panel-* cases go to the agent panel script, the rest to the main status line.
 # cache-* cases get a config dir with a fresh usage-cache.json and no skills; @repo@ in a payload
 # is replaced with a scratch git repo on branch "feature" with an untracked file, and @tmp@ in a
-# payload, transcript or seed with the dir of the other scratch repos (session-repos cases).
+# payload, transcript, script a transcript runs (*.py) or seed with the dir of the other scratch
+# repos (session-repos cases).
 # cases/<name>.state and cases/<name>.repos, if present, seed statusline-state/<session_id> and
 # <session_id>.repos of the case before it runs; @line1@ in a seed is the byte size of the first
 # line of the case transcript. gh is a stub that fails, so no case reaches the network.
@@ -37,11 +38,14 @@ GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
   git -C "$tmp/detached" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init &&
   git -C "$tmp/detached" checkout -q --detach || exit 1
 ln -s "$tmp/sib" "$tmp/link-sib" && mkdir "$tmp/nogit" || exit 1
+# dir-* cases: a cwd in a subfolder of the scratch repo and in a worktree of another repo
+mkdir -p "$tmp/repo/sub/deep" && git -C "$tmp/detached" worktree add -q -b wt "$tmp/wt-tree" &&
+  mkdir "$tmp/wt-tree/sub" || exit 1
 mkdir "$tmp/bin" && printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh" && chmod +x "$tmp/bin/gh" || exit 1
 export PATH="$tmp/bin:$PATH"
 # transcripts may name @tmp@ paths, so they are read from a substituted copy
 cp -R fixtures/transcripts "$tmp/transcripts" || exit 1
-find "$tmp/transcripts" -name '*.jsonl' -exec sed -i '' "s#@tmp@#$tmp#g" {} + || exit 1
+find "$tmp/transcripts" \( -name '*.jsonl' -o -name '*.py' \) -exec sed -i '' "s#@tmp@#$tmp#g" {} + || exit 1
 mkdir "$tmp/cache-config"
 # a copy: cases with a session_id write statusline-state/ into the config dir
 cp -R fixtures/config "$tmp/config" || exit 1

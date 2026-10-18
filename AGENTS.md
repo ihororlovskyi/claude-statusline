@@ -72,7 +72,7 @@ Run the snapshot tests: `bash tests/run.sh` (CI runs it on macOS for every push 
 
 After an intended output change, regenerate the snapshots with `bash tests/run.sh --update` and review `git diff tests/expected` before committing. Add a case for every new branch of the output.
 
-After changes in the repo, update the installed copy: `sh install.sh`.
+After changes in the repo, update the installed copy: `sh install.sh`, only when the user asks: it writes `~/.claude` and overwrites `settings.json.bak` on every run. To try the installer, set `CLAUDE_CONFIG_DIR="$(mktemp -d)"` (seed `.claude.json` with `{}` to cover the `prStatusFooterEnabled` step).
 
 To see a real payload, temporarily add `printf '%s' "$input" > /tmp/statusline-payload.json` after `input=$(cat)` in the installed `~/.claude/statusline.sh`, then restore it with `sh install.sh`.
 

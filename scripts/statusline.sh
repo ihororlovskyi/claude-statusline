@@ -212,7 +212,7 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
       # records count bytes (LC_ALL=C); a last record without its newline is half-written (or
       # cut by the chunk) and stays for the next render
       out=$(tail -c +$(( off + 1 )) "$f" 2>/dev/null | head -c "$chunk" | LC_ALL=C awk -v w="$chunk" '
-        function emit(r) { if (r ~ /"name":"(Edit|Write|NotebookEdit)"/) print "L" r }
+        function emit(r) { if (r ~ /"name":"(Edit|Write|NotebookEdit|Bash)"/) print "L" r }
         NR > 1 { emit(prev) }
         { prev = $0; n += length($0) + 1 }
         END {
@@ -224,11 +224,29 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
       # a single line longer than the chunk: skip it rather than stall
       [ "$read_n" -eq 0 ] && [ "$chunk" -eq 16777216 ] && read_n=$chunk
       off=$(( off + read_n ))
+      # dirs of edited files, and from Bash commands the dirs of "git -C <dir> <writing subcommand>"
+      # and of "cd <dir>" in a command that writes (sed -i, a redirect, mv, python, ...); relative
+      # dirs resolve against the cwd of the entry, ~ against $HOME, and $vars are skipped
       dirs=$(printf '%s\n' "$out" | sed -n 's/^L//p' | jq -rR '
-        fromjson? | select(type == "object" and .type == "assistant") | .message.content[]? |
-        select(type == "object" and .type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "NotebookEdit")) |
-        (.input.file_path // .input.notebook_path) | strings | select(startswith("/") and (contains("\n") | not))' 2>/dev/null |
-        sed 's#/[^/]*$##' | awk '!seen[$0]++')
+        def gitw: "commit|add|push|merge|rebase|reset|checkout|switch|tag|mv|rm|apply|am|cherry-pick|stash|restore|pull";
+        def unq: sub("^[\"\\x27]"; "") | sub("[\"\\x27]$"; "");
+        def abs($cwd): if startswith("~/") then env.HOME + .[1:] elif . == "~" then env.HOME
+          elif startswith("/") then . elif $cwd != "" then $cwd + "/" + . else empty end;
+        fromjson? | select(type == "object" and .type == "assistant") | (.cwd | strings // "") as $cwd |
+        .message.content[]? | select(type == "object" and .type == "tool_use") |
+        if .name == "Edit" or .name == "Write" or .name == "NotebookEdit" then
+          (.input.file_path // .input.notebook_path) | strings |
+          select(startswith("/") and (contains("\n") | not)) | sub("/[^/]*$"; "")
+        elif .name == "Bash" then
+          .input.command | strings | . as $c |
+          ($c | test("\\bgit\\s+(-C\\s+\\S+\\s+)?(" + gitw + ")\\b") or
+            test("sed\\s+-[a-zA-Z]*i|perl\\s+-[a-zA-Z]*i|(?<![0-9&>])>>?\\s*(?!/dev/null|&)\\S|\\b(mv|cp|rm|tee|touch|mkdir|patch|python3?|node|npm|npx|bun)\\s")) as $w |
+          (($c | [scan("\\bgit\\s+-C\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)\\s+([a-z-]+)")] | .[] |
+              select(.[1] | test("^(" + gitw + ")$")) | .[0]),
+           (if $w then $c | [scan("(?:^|[;&|(\\n\"\\x27]\\s*)cd\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)")] | .[] | .[0]
+            else empty end)) |
+          unq | select(test("[$`*?\\n]") | not) | abs($cwd)
+        else empty end' 2>/dev/null | awk '!seen[$0]++')
       while IFS= read -r d; do
         [ -n "$d" ] || d=/
         # the file may be gone or not created yet: the nearest existing parent

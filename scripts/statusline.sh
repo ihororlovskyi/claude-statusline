@@ -36,8 +36,6 @@ gray="\033[0;90m"
 cyan="\033[0;36m"
 mag="\033[0;35m"
 
-dir=$(basename "$cwd")
-
 # git branch + dirty state
 # symbolic-ref prints nothing outside a repo or on a detached HEAD
 # " git:(<branch>) ✗" for the repo at $1
@@ -175,6 +173,8 @@ pr_cached() {
 }
 
 cwd_root=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+# the repo root, so a cd into a subdir keeps the repo name; a worktree shows its own dir
+dir=$(basename "${cwd_root:-$cwd}")
 cwd_slug=""
 [ -n "$cwd_root" ] && cwd_slug=$(gh_slug "$cwd_root")
 # PR of the cwd branch: the payload mirrors the footer badge; without it (no gh check, or the
@@ -191,6 +191,11 @@ fi
 # agent transcripts, read incrementally. State "<session_id>.repos": "o <offset> <file>" per
 # transcript, up to the end of its last complete line, then "r <root>" per repo in first-edit order
 roots=""
+# literal absolute and ~/ paths in a text, after a space, a quote or =; a path with $, a backtick,
+# a glob or a backslash is built at run time and skipped
+lits_jq='def lits: [scan("(?:^|[\\s\"\\x27=])((?:~/|/)[^\\s\"\\x27;&|()<>{}\\[\\],]*)")] | .[] | .[0] |
+  sub("[.:]+$"; "") | select(length > 2 and (test("[$`*?\\\\]") | not)) |
+  if startswith("~/") then env.HOME + .[1:] else . end;'
 if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
   repos_state="$state_dir/$session_id.repos"
   old_state=""
@@ -224,10 +229,12 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
       # a single line longer than the chunk: skip it rather than stall
       [ "$read_n" -eq 0 ] && [ "$chunk" -eq 16777216 ] && read_n=$chunk
       off=$(( off + read_n ))
-      # dirs of edited files, and from Bash commands the dirs of "git -C <dir> <writing subcommand>"
-      # and of "cd <dir>" in a command that writes (sed -i, a redirect, mv, python, ...); relative
-      # dirs resolve against the cwd of the entry, ~ against $HOME, and $vars are skipped
-      dirs=$(printf '%s\n' "$out" | sed -n 's/^L//p' | jq -rR '
+      # dirs of edited files, and from Bash commands the dirs of "git -C <dir> <writing subcommand>";
+      # a command that writes (sed -i, a redirect, mv, python, ...) adds "cd <dir>", every literal
+      # path in its text (heredocs included) and "S<file>" for a script it runs (python3 <file>, sh
+      # <file>, ...), whose literal paths are read below; relative dirs resolve against the cwd of
+      # the entry, ~ against $HOME, and $vars are skipped
+      dirs=$(printf '%s\n' "$out" | sed -n 's/^L//p' | jq -rR "$lits_jq"'
         def gitw: "commit|add|push|merge|rebase|reset|checkout|switch|tag|mv|rm|apply|am|cherry-pick|stash|restore|pull";
         def unq: sub("^[\"\\x27]"; "") | sub("[\"\\x27]$"; "");
         def abs($cwd): if startswith("~/") then env.HOME + .[1:] elif . == "~" then env.HOME
@@ -241,12 +248,23 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
           .input.command | strings | . as $c |
           ($c | test("\\bgit\\s+(-C\\s+\\S+\\s+)?(" + gitw + ")\\b") or
             test("sed\\s+-[a-zA-Z]*i|perl\\s+-[a-zA-Z]*i|(?<![0-9&>])>>?\\s*(?!/dev/null|&)\\S|\\b(mv|cp|rm|tee|touch|mkdir|patch|python3?|node|npm|npx|bun)\\s")) as $w |
-          (($c | [scan("\\bgit\\s+-C\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)\\s+([a-z-]+)")] | .[] |
+          ((($c | [scan("\\bgit\\s+-C\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)\\s+([a-z-]+)")] | .[] |
               select(.[1] | test("^(" + gitw + ")$")) | .[0]),
            (if $w then $c | [scan("(?:^|[;&|(\\n\"\\x27]\\s*)cd\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)")] | .[] | .[0]
             else empty end)) |
-          unq | select(test("[$`*?\\n]") | not) | abs($cwd)
+          unq | select(test("[$`*?\\n]") | not) | abs($cwd)),
+          (if $w then ($c | lits),
+            ($c | [scan("(?:^|[;&|(\\n]\\s*)(?:python3?|node|bash|sh|zsh)\\s+(?:-[A-Za-z]+\\s+)*(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^-\\s;&|)<>][^\\s;&|)<>]*)")] | .[] | .[0] |
+              unq | select(test("[$`*?\\n]") | not) | abs($cwd) | "S" + .)
+           else empty end)
         else empty end' 2>/dev/null | awk '!seen[$0]++')
+      # a script read once, on the render that reaches its entry; at most 256 KB, gone is no error
+      dirs=$(printf '%s\n' "$dirs" | while IFS= read -r d; do
+        case "$d" in
+          S*) [ -f "${d#S}" ] && head -c 262144 "${d#S}" 2>/dev/null | jq -rRs "$lits_jq lits" 2>/dev/null ;;
+          *) printf '%s\n' "$d" ;;
+        esac
+      done | awk '!seen[$0]++')
       while IFS= read -r d; do
         [ -n "$d" ] || d=/
         # the file may be gone or not created yet: the nearest existing parent
@@ -473,8 +491,8 @@ EOF
   printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, group(n), g, t
   if (d > 0) printf "  \033[0;%sm+%s\033[0m %stok\033[0m", col, group(d), g
 }')
-  # agent time: the finished turns plus a running one, then "+" the running or last turn; gray
-  # like the labels, at the end of the last line (week, else rest, else cntx)
+  # agent time: the finished turns plus a running one in white, then "+" the running or last turn
+  # in gray, at the end of the last line (week, else rest, else cntx)
   time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" -v g="$gray" '
   function fmt(x) {
     x = int(x)
@@ -487,7 +505,7 @@ EOF
     sum = f[1] / 1000; last = f[2] / 1000
     if (f[3] != "-" && now >= f[3] + 0) { last = now - f[3]; sum += last }
     if (sum < 1) exit
-    printf "  %s%s\033[0m", g, fmt(sum)
+    printf "  \033[0;37m%s\033[0m", fmt(sum)
     if (last >= 1) printf "  %s+%s\033[0m", g, fmt(last)
   }')
   # billing month between UTC midnights on the 1st, for the Enterprise rest line

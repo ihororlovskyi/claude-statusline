@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"literal"},"promptId":"p1"}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"python3 @tmp@/transcripts/repos-literal/edit.py"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"python3 - <<'PY'\np = '@tmp@/extra/README.md'\nopen(p, 'a').close()\nPY"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"python3 /nonexistent/gone.py"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"cat @tmp@/plain/README.md && grep -n x @tmp@/wip/w.md"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t5","name":"Bash","input":{"command":"G=@tmp@; echo x > $G/sib/f && cd \"$G/detached\" && touch y"}}]}}

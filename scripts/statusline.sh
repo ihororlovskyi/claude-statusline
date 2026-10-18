@@ -259,10 +259,11 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
            else empty end)
         else empty end' 2>/dev/null | awk '!seen[$0]++')
       # a script read once, on the render that reaches its entry; at most 256 KB, gone is no error
+      # (S*) with the paren: bash 3.2 (/bin/sh on macOS) ends $( at the ) of a bare case pattern
       dirs=$(printf '%s\n' "$dirs" | while IFS= read -r d; do
         case "$d" in
-          S*) [ -f "${d#S}" ] && head -c 262144 "${d#S}" 2>/dev/null | jq -rRs "$lits_jq lits" 2>/dev/null ;;
-          *) printf '%s\n' "$d" ;;
+          (S*) [ -f "${d#S}" ] && head -c 262144 "${d#S}" 2>/dev/null | jq -rRs "$lits_jq lits" 2>/dev/null ;;
+          (*) printf '%s\n' "$d" ;;
         esac
       done | awk '!seen[$0]++')
       while IFS= read -r d; do

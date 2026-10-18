@@ -455,8 +455,9 @@ EOF
   printf "\033[0;%sm%s\033[0m %stok /%s\033[0m", col, group(n), g, t
   if (d > 0) printf "  \033[0;%sm+%s\033[0m %stok\033[0m", col, group(d), g
 }')
-  # agent time: the finished turns plus a running one, then "+" the running or last turn
-  time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" '
+  # agent time: the finished turns plus a running one, then "+" the running or last turn; gray
+  # like the labels, at the end of the last line (week, else rest, else cntx)
+  time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" -v g="$gray" '
   function fmt(x) {
     x = int(x)
     if (x >= 3600) return sprintf("%dh %dm", x / 3600, (x % 3600) / 60)
@@ -468,10 +469,17 @@ EOF
     sum = f[1] / 1000; last = f[2] / 1000
     if (f[3] != "-" && now >= f[3] + 0) { last = now - f[3]; sum += last }
     if (sum < 1) exit
-    printf "  \033[0;37m%s\033[0m", fmt(sum)
-    if (last >= 1) printf "  \033[0;37m+%s\033[0m", fmt(last)
+    printf "  %s%s\033[0m", g, fmt(sum)
+    if (last >= 1) printf "  %s+%s\033[0m", g, fmt(last)
   }')
-  ctx_info="$ctx_info$time_str"
+  # billing month between UTC midnights on the 1st, for the Enterprise rest line
+  month_start=$(TZ=UTC date -v1d -v0H -v0M -v0S +%s 2>/dev/null)
+  next_month=$(TZ=UTC date -v+1m -v1d -v0H -v0M -v0S +%s 2>/dev/null)
+  week_time="" rest_time=""
+  if [ -n "$weekly_pct" ]; then week_time=$time_str
+  elif [ -z "$session_pct" ] && [ -n "$month_start" ] && [ -n "$next_month" ]; then rest_time=$time_str
+  else ctx_info="$ctx_info$time_str"
+  fi
   ctx_bar=$(render_bar "cntx" "$used_int")
   # without a sess line the cost goes on the used line, else here
   [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"
@@ -491,18 +499,14 @@ EOF
   if [ -n "$weekly_pct" ]; then
     week_bar=$(render_bar "week" "$weekly_pct")
     if [ -n "$weekly_reset" ]; then
-      printf "%s%s  $gray%s  %s\033[0m\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))"
+      printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))" "$week_time"
     else
-      printf "%s%s\n" "$p6" "$week_bar"
+      printf "%s%s%s\n" "$p6" "$week_bar" "$week_time"
     fi
   fi
 
   # Enterprise: no sess/week limits → show real usage from claude.ai API
   if [ -z "$session_pct" ] && [ -z "$weekly_pct" ]; then
-    # billing month runs between UTC midnights on the 1st
-    month_start=$(TZ=UTC date -v1d -v0H -v0M -v0S +%s 2>/dev/null)
-    next_month=$(TZ=UTC date -v+1m -v1d -v0H -v0M -v0S +%s 2>/dev/null)
-
     if [ -n "$spend_pct" ] && [ -n "$spend_used" ]; then
       usage_bar=$(render_bar "used" "$spend_pct")
       printf "%s%s  $cyan\$%s$gray/\$%s\033[0m%s\n" \
@@ -512,7 +516,7 @@ EOF
     # rest: share of the billing month already elapsed + time until reset
     if [ -n "$month_start" ] && [ -n "$next_month" ]; then
       rest_bar=$(render_bar "rest" "$(( (now - month_start) * 100 / (next_month - month_start) ))")
-      printf "%s%s  $gray%s\033[0m\n" "$p6" "$rest_bar" "$(fmt_eta_dhm $(( next_month - now )))"
+      printf "%s%s  $gray%s\033[0m%s\n" "$p6" "$rest_bar" "$(fmt_eta_dhm $(( next_month - now )))" "$rest_time"
     fi
   fi
 fi

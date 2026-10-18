@@ -6,9 +6,9 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 ➜  my-project git:(main) ✗ · PR #11 · Opus 5.5 medium
 ↳  acme/skills git:(dev) ✗ · PR #109
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
-      cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  1h 13m  +5m 32s
+      cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
-      week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m
+      week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
 
 ↳ rc-qa  Sonnet 5.5 high  6,512 tok  $0.02  Running ping in foreground
 ↳ Explore  Haiku 4.5  12,104 tok  $0.01  explorer
@@ -63,9 +63,10 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 - `PR` is gray and the number shows the state, as in the footer badge: yellow waiting for review, green approved, red changes requested, gray `draft` and `closed`, magenta `merged`. The current repo's PR comes from Claude Code (the same data as the footer badge); otherwise, and for the other repos, from `gh pr list`, run in the background at most every 5 minutes per branch with the first logged-in `gh` account that can read the repo (`GH_ACC` from the repo's `.env/.env` first, then the active account), so a new PR shows up on a later render;
 - thinking mode (`thnk:on` / `off`, `no` when unknown);
 - next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
-- context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed; then the time the agent has worked in the session (the `turn_duration` entries Claude Code writes when a turn ends, plus a turn still running) and `+` the time of the current or last prompt (`1h 13m  +5m 32s`);
+- context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;
 - at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since; the total and the count since the last compaction are white, a `0` right after a compaction stays gray). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either;
 - 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
+- at the end of the last line (`week`, on Enterprise/Team `rest`), in gray: the time the agent has worked in the session (the `turn_duration` entries Claude Code writes when a turn ends, plus a turn still running), then `+` the time of the current or last prompt (`1h 13m  +5m 32s`);
 
 Bars turn yellow at 50% and red at 80%. Token counts turn yellow at 100,000 and red at 150,000 tokens.
 

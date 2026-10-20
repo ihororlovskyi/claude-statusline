@@ -192,7 +192,7 @@ fi
 # "o <offset> <file>" per transcript, up to the end of its last complete line, then "r <root>" per
 # repo in first-edit order. A state of other rules (older versions have no "v" line) is dropped, so
 # the transcripts are read again and roots the old rules got wrong go away
-repos_rules=2
+repos_rules=3
 roots=""
 # literal absolute and ~/ paths in a text, after a space, a quote or =; a path with $, a backtick,
 # a glob or a backslash is built at run time and skipped
@@ -267,7 +267,7 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
         elif .name == "Bash" then
           .input.command | strings | . as $c |
           # per part: its command writes (judged by its first line, not the heredoc body), and
-          # its redirect targets; -> and => are no redirects
+          # its redirect targets, also after a script it runs; -> and => are no redirects
           [$c | parts | .[] | . as $t | split("\n")[0] as $f | {t: $t,
             s: [$f | scan("^(?:python3?|node|bash|sh|zsh)\\s+(?:-(?![ce]\\s)[A-Za-z]+\\s+)*(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^-\\s;&|)<>][^\\s;&|)<>]*)") | .[0] |
               unq | select(test("[$`*?\\n]") | not) | abs($cwd)],
@@ -279,7 +279,7 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
               select(.[1] | test("^(" + gitw + ")$")) | .[0]),
            (if $w then $c | [scan("(?:^|[;&|(\\n\"\\x27]\\s*)cd\\s+" + word)] | .[] | .[0]
             else empty end),
-           ($p[] | select(.c | not) | .r[])) |
+           ($p[] | .r[])) |
           unq | select(test("[$`*?\\n]") | not) | abs($cwd)),
           ($p[] | select(.c and (.s | length) == 0) | .t | lits),
           ($p[] | select(.c) | .s[] | "S" + .)
@@ -434,8 +434,10 @@ if [ -f "$transcript" ]; then
   if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
   if [ "$scan" = R ]; then
     [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
-    m=$(tail -r "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
-    u=$(tail -r "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
+    # tail -r is BSD, tac GNU
+    rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
+    m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
+    u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
     if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
       leaf=$(printf '%s\n' "$u" | LC_ALL=C awk '{ i = index($0, "\"uuid\":\""); print substr($0, i + 8, 36) }')
     else

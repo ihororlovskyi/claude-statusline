@@ -45,8 +45,9 @@ cp "$SETTINGS" "$SETTINGS.bak"
 # custom dirs are single-quoted so spaces and shell metacharacters survive in the command
 dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
 [ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
+# refreshInterval re-renders an idle status line, so the cche bar keeps moving; a value already set is kept
 jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
-  '.statusLine = {type: "command", command: $main}
+  '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}
   | .subagentStatusLine = {type: "command", command: $sub}' \
   "$SETTINGS" > "$tmp/settings.json"
 mv "$tmp/settings.json" "$SETTINGS"
@@ -63,5 +64,10 @@ elif ! jq -e '.prStatusFooterEnabled == false' "$GLOBAL" > /dev/null 2>&1; then
   jq '.prStatusFooterEnabled = false' "$GLOBAL" > "$tmp/claude.json"
   mv "$tmp/claude.json" "$GLOBAL"
   echo "set prStatusFooterEnabled: false in $GLOBAL (backup: $GLOBAL.bak)"
+else
+  echo "prStatusFooterEnabled is already false in $GLOBAL"
 fi
-echo "done - claude-statusline $version installed, restart Claude Code to pick up the status line"
+# green only on a terminal, so logs and CI get plain text
+done_word=done
+[ -t 1 ] && done_word=$(printf '\033[0;32mdone\033[0m')
+echo "$done_word - claude-statusline $version installed, restart Claude Code to pick up the status line"

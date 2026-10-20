@@ -188,8 +188,11 @@ else
 fi
 
 # repos the session edited: Edit/Write/NotebookEdit paths in the session transcript and its
-# agent transcripts, read incrementally. State "<session_id>.repos": "o <offset> <file>" per
-# transcript, up to the end of its last complete line, then "r <root>" per repo in first-edit order
+# agent transcripts, read incrementally. State "<session_id>.repos": "v <rules>", then
+# "o <offset> <file>" per transcript, up to the end of its last complete line, then "r <root>" per
+# repo in first-edit order. A state of other rules (older versions have no "v" line) is dropped, so
+# the transcripts are read again and roots the old rules got wrong go away
+repos_rules=3
 roots=""
 # literal absolute and ~/ paths in a text, after a space, a quote or =; a path with $, a backtick,
 # a glob or a backslash is built at run time and skipped
@@ -200,6 +203,7 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
   repos_state="$state_dir/$session_id.repos"
   old_state=""
   [ -f "$repos_state" ] && old_state=$(cat "$repos_state" 2>/dev/null)
+  [ "${old_state%%"$nl"*}" = "v $repos_rules" ] || old_state=""
   roots=$(printf '%s\n' "$old_state" | sed -n 's/^r //p')
   offsets=""
   for f in "$transcript" "${transcript%.jsonl}"/subagents/agent-*.jsonl; do
@@ -229,16 +233,32 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
       # a single line longer than the chunk: skip it rather than stall
       [ "$read_n" -eq 0 ] && [ "$chunk" -eq 16777216 ] && read_n=$chunk
       off=$(( off + read_n ))
-      # dirs of edited files, and from Bash commands the dirs of "git -C <dir> <writing subcommand>";
-      # a command that writes (sed -i, a redirect, mv, python, ...) adds "cd <dir>", every literal
-      # path in its text (heredocs included) and "S<file>" for a script it runs (python3 <file>, sh
-      # <file>, ...), whose literal paths are read below; relative dirs resolve against the cwd of
-      # the entry, ~ against $HOME, and $vars are skipped
+      # dirs of edited files, and from Bash commands the dirs of "git -C <dir> <writing subcommand>".
+      # A command is split into parts at newlines, ;, &&, || and |, a heredoc body staying with the
+      # part that opens it. A part that writes by its command (sed -i, mv, python, a writing git
+      # subcommand, ...) adds every literal path in its text (heredoc and -c code included), or, when
+      # it runs a script file (python3 <file>, node <file>), "S<file>" instead, whose literal paths
+      # are read below: neither the script path (a skill script reached through a symlink names
+      # the clone the symlink points to) nor the arguments, which it may only read, are edits.
+      # A part that writes only by a redirect adds the redirect target.
+      # A command with a writing part also adds "cd <dir>". Relative dirs resolve against the cwd
+      # of the entry, ~ against $HOME, and $vars are skipped
       dirs=$(printf '%s\n' "$out" | sed -n 's/^L//p' | jq -rR "$lits_jq"'
         def gitw: "commit|add|push|merge|rebase|reset|checkout|switch|tag|mv|rm|apply|am|cherry-pick|stash|restore|pull";
         def unq: sub("^[\"\\x27]"; "") | sub("[\"\\x27]$"; "");
         def abs($cwd): if startswith("~/") then env.HOME + .[1:] elif . == "~" then env.HOME
           elif startswith("/") then . elif $cwd != "" then $cwd + "/" + . else empty end;
+        def word: "(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)<>]+)";
+        def parts: reduce (split("\n")[]) as $l ({o: [], t: null, i: null};
+          if .t != null then .t as $t | .o[.i] += "\n" + $l |
+            if $l | test("^\\s*" + $t + "\\s*$") then .t = null else . end
+          else [$l | splits("\\s*(?:&&|\\|\\||[;|])\\s*") | sub("^[\\s({]+"; "")] as $p |
+            ([$p[] | test("(?<!<)<<(?!<)")] | index(true)) as $h |
+            if $h == null then .o += $p
+            else ((.o | length) + $h) as $i | .o += $p | .i = $i |
+              .t = ($p[$h] | capture("(?<!<)<<(?!<)-?\\s*[\"\\x27]?(?<g>[A-Za-z_][A-Za-z0-9_]*)") | .g)
+            end
+          end) | .o;
         fromjson? | select(type == "object" and .type == "assistant") | (.cwd | strings // "") as $cwd |
         .message.content[]? | select(type == "object" and .type == "tool_use") |
         if .name == "Edit" or .name == "Write" or .name == "NotebookEdit" then
@@ -246,17 +266,23 @@ if [ -n "$session_ok" ] && [ -f "$transcript" ]; then
           select(startswith("/") and (contains("\n") | not)) | sub("/[^/]*$"; "")
         elif .name == "Bash" then
           .input.command | strings | . as $c |
-          ($c | test("\\bgit\\s+(-C\\s+\\S+\\s+)?(" + gitw + ")\\b") or
-            test("sed\\s+-[a-zA-Z]*i|perl\\s+-[a-zA-Z]*i|(?<![0-9&>])>>?\\s*(?!/dev/null|&)\\S|\\b(mv|cp|rm|tee|touch|mkdir|patch|python3?|node|npm|npx|bun)\\s")) as $w |
-          ((($c | [scan("\\bgit\\s+-C\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)\\s+([a-z-]+)")] | .[] |
+          # per part: its command writes (judged by its first line, not the heredoc body), and
+          # its redirect targets, also after a script it runs; -> and => are no redirects
+          [$c | parts | .[] | . as $t | split("\n")[0] as $f | {t: $t,
+            s: [$f | scan("^(?:python3?|node|bash|sh|zsh)\\s+(?:-(?![ce]\\s)[A-Za-z]+\\s+)*(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^-\\s;&|)<>][^\\s;&|)<>]*)") | .[0] |
+              unq | select(test("[$`*?\\n]") | not) | abs($cwd)],
+            c: ($f | test("\\bgit\\s+(-C\\s+\\S+\\s+)?(" + gitw + ")\\b") or
+              test("sed\\s+-[a-zA-Z]*i|perl\\s+-[a-zA-Z]*i|\\b(mv|cp|rm|tee|touch|mkdir|patch|python3?|node|npx|bun)\\s|\\bnpm\\s+(?!(view|v|info|show|ls|list|outdated|search|whoami|ping|help|prefix|root|explain|why)\\b)")),
+            r: [$f | scan("(?<![0-9&>=-])>>?\\s*(?!/dev/null|&)" + word) | .[0]]}] as $p |
+          ($p | any(.c or (.r | length > 0))) as $w |
+          ((($c | [scan("\\bgit\\s+-C\\s+" + word + "\\s+([a-z-]+)")] | .[] |
               select(.[1] | test("^(" + gitw + ")$")) | .[0]),
-           (if $w then $c | [scan("(?:^|[;&|(\\n\"\\x27]\\s*)cd\\s+(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^\\s;&|)]+)")] | .[] | .[0]
-            else empty end)) |
+           (if $w then $c | [scan("(?:^|[;&|(\\n\"\\x27]\\s*)cd\\s+" + word)] | .[] | .[0]
+            else empty end),
+           ($p[] | .r[])) |
           unq | select(test("[$`*?\\n]") | not) | abs($cwd)),
-          (if $w then ($c | lits),
-            ($c | [scan("(?:^|[;&|(\\n]\\s*)(?:python3?|node|bash|sh|zsh)\\s+(?:-[A-Za-z]+\\s+)*(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^-\\s;&|)<>][^\\s;&|)<>]*)")] | .[] | .[0] |
-              unq | select(test("[$`*?\\n]") | not) | abs($cwd) | "S" + .)
-           else empty end)
+          ($p[] | select(.c and (.s | length) == 0) | .t | lits),
+          ($p[] | select(.c) | .s[] | "S" + .)
         else empty end' 2>/dev/null | awk '!seen[$0]++')
       # a script read once, on the render that reaches its entry; at most 256 KB, gone is no error
       # (S*) with the paren: bash 3.2 (/bin/sh on macOS) ends $( at the ) of a bare case pattern
@@ -279,7 +305,7 @@ EOF
     fi
     offsets="$offsets${nl}o $off $f"
   done
-  new_state=$(printf '%s\n' "${offsets#"$nl"}"; [ -n "$roots" ] && printf '%s\n' "$roots" | sed 's/^/r /')
+  new_state=$(printf 'v %s\n%s\n' "$repos_rules" "${offsets#"$nl"}"; [ -n "$roots" ] && printf '%s\n' "$roots" | sed 's/^/r /')
   if [ "$new_state" != "$old_state" ]; then
     { mkdir -p "$state_dir" && printf '%s\n' "$new_state" > "$repos_state.$$" &&
       mv -f "$repos_state.$$" "$repos_state"; } 2>/dev/null || rm -f "$repos_state.$$" 2>/dev/null
@@ -346,10 +372,44 @@ esac
 # meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
 # summaries and /compact itself are user entries too, but not prompts. The same pass sums the
 # turn_duration entries Claude Code writes when a turn ends: "<sum ms> <last ms> <start|->",
-# where start is the epoch of a prompt whose turn is still running
-marks="" turns=""
-[ -f "$transcript" ] && scan=$(grep -E '"type":"(user|system)"' "$transcript" 2>/dev/null | jq -nrR '
-  [inputs | fromjson? | select(type == "object") |
+# where start is the epoch of a prompt whose turn is still running.
+# /rewind keeps the dropped entries in the file and appends an explicit last-prompt entry whose
+# leafUuid is the entry to go on from (zeros: the start). After one, only the active branch counts:
+# the entries from the leaf back along parentUuid, across a compaction along logicalParentUuid.
+# The first pass also takes the explicit last-prompt entries and prints only "R" when it meets
+# one, so a session without /rewind costs as before. Then the leaf is that leafUuid while no entry
+# follows it, else the last entry with a uuid (tail -r reads from the end; a grep over the whole
+# file took 2.4 s for 124 MB), and awk adds "I <uuid> <parent>" for the other entries: a full jq
+# parse of them took 4.7 s for 124 MB (the count without /rewind 0.8 s), as did awk over every
+# line. Every entry starts with "parentUuid" (the lines without it, such as api-request-blob, are
+# skipped) and its first "uuid" and "logicalParentUuid" are its own (checked on 74,530 entries in
+# October 2026)
+rewind_re='^\{"type":"last-prompt".*"explicit":true'
+other_ids() {
+  grep '^{"parentUuid":' "$transcript" 2>/dev/null | grep -vE '"type":"(user|system)"' | LC_ALL=C awk '
+    function id(key) { i = index($0, "\"" key "\":\""); return i ? substr($0, i + length(key) + 4, 36) : "" }
+    {
+      u = id("uuid")
+      if (u == "") next
+      p = substr($0, 1, 15) == "{\"parentUuid\":\"" ? substr($0, 16, 36) : id("logicalParentUuid")
+      print "I", u, (p == "" ? "-" : p)
+    }'
+}
+# $1: "" (find out), "-" (no chain) or the leaf
+count_prompts() {
+  { [ -n "$1" ] && [ "$1" != "-" ] && other_ids
+    grep -E "\"type\":\"(user|system)\"|$rewind_re" "$transcript" 2>/dev/null; } | jq -nrR --arg leaf "$1" '
+  [inputs |
+    if startswith("I ") then split(" ") | {u: .[1], p: .[2]}
+    else fromjson? | select(type == "object") | {u: (.uuid | if type == "string" then . else null end), p: (.parentUuid // .logicalParentUuid), e: .}
+    end] |
+  if $leaf == "" and any(.[]; .e.type == "last-prompt" and .e.explicit == true) then "R" else
+  if $leaf == "" or $leaf == "-" then map(.e) else
+    (reduce (.[] | select(.u != null)) as $x ({}; .[$x.u] = $x.p)) as $up |
+    ([$leaf | recurse($up[.] | strings)] | map({key: ., value: true}) | from_entries) as $keep |
+    map(select(.e != null and $keep[.u // ""]) | .e)
+  end |
+  map(
     if .type == "system" then
       if .subtype == "compact_boundary" then {k: "C"}
       elif .subtype == "turn_duration" then
@@ -361,14 +421,37 @@ marks="" turns=""
       if type == "string" then select(startswith("<") or startswith("/compact") | not) | {k: "P", at: $at}
       elif type == "array" then select(map(.type?) | index("tool_result") | not) | {k: "P", at: $at}
       else empty end
-    end] |
+    end) |
   (map(select(.k != "T") | .k) | join("")),
   "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
-' 2>/dev/null) && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
-# "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one
-prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" 'BEGIN {
+  end' 2>/dev/null
+}
+# a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
+rewind_flag=""
+[ -n "$session_ok" ] && rewind_flag="$state_dir/$session_id.rewind"
+marks="" turns="" leaf=""
+if [ -f "$transcript" ]; then
+  if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
+  if [ "$scan" = R ]; then
+    [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
+    # tail -r is BSD, tac GNU
+    rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
+    m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
+    u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
+    if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
+      leaf=$(printf '%s\n' "$u" | LC_ALL=C awk '{ i = index($0, "\"uuid\":\""); print substr($0, i + 8, 36) }')
+    else
+      leaf=$(printf '%s\n' "$m" | sed -n 's/.*"leafUuid":"\([0-9a-f-]*\)".*/\1/p')
+    fi
+    scan=$(count_prompts "${leaf:--}") || scan=""
+  fi
+  [ -n "$scan" ] && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
+fi
+# "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one;
+# no prompts show nothing, but "0 prompts" once /rewind dropped them all
+prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   p = gsub(/P/, "P", m)
-  if (p == 0) exit
+  if (p == 0 && r == "") exit
   u = sprintf("%d", p)
   while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
   printf "  \033[0;37m%s\033[0m %s%s", u, g, (p == 1 ? "prompt" : "prompts")
@@ -521,6 +604,40 @@ EOF
   # without a sess line the cost goes on the used line, else here
   [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"
   printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
+
+  # line 3b: prompt cache, from the last main-chain response in the transcript tail; a cache read
+  # restarts the TTL, so it runs from the request that got that response (the entry the first
+  # block of the response hangs off), and the TTL type is the larger write of the last response
+  # that wrote to the cache
+  cache_info=""
+  [ -f "$transcript" ] && cache_info=$(tail -c 1048576 "$transcript" 2>/dev/null | jq -nrR '
+    def at: if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end;
+    [inputs | fromjson? | select(type == "object" and .isSidechain != true)] |
+    (map(select(.type == "assistant" and (.message.usage | type) == "object"))) as $a |
+    ($a | last) as $l |
+    select($l != null) |
+    (map(select(.uuid != null) | {key: .uuid, value: .timestamp}) | from_entries) as $ts |
+    ($a | map(select(.message.id == $l.message.id)) | first) as $f |
+    (($ts[$f.parentUuid // ""] // $f.timestamp) | at) as $at |
+    ($a | map(.message.usage | select((.cache_creation_input_tokens // 0) > 0)) | last) as $w |
+    if $w == null then (select(($l.message.usage.cache_read_input_tokens // 0) > 0) | 300)
+    elif ($w.cache_creation.ephemeral_1h_input_tokens // 0) > ($w.cache_creation.ephemeral_5m_input_tokens // 0) then 3600
+    else 300 end |
+    select($at != null) | "\($at | floor) \(.)"' 2>/dev/null)
+  case "$cache_info" in
+    [0-9]*" "[0-9]*)
+      cache_at=${cache_info% *} cache_ttl=${cache_info#* }
+      cache_exp=$(( cache_at + cache_ttl ))
+      cache_pct=$(( (now - cache_at) * 100 / cache_ttl ))
+      [ "$cache_pct" -lt 0 ] && cache_pct=0
+      [ "$cache_pct" -gt 100 ] && cache_pct=100
+      cache_left="expired"
+      [ "$now" -lt "$cache_exp" ] && cache_left=$(fmt_eta_hm $(( cache_exp - now )))
+      printf "%s%s  $gray%s  %s  ttl %s\033[0m\n" "$p6" "$(render_bar "cche" "$cache_pct")" \
+        "$(LC_ALL=C date -r "$cache_exp" "+%H:%M" 2>/dev/null || LC_ALL=C date -d "@$cache_exp" "+%H:%M" 2>/dev/null)" \
+        "$cache_left" "$([ "$cache_ttl" -eq 3600 ] && echo 1h || echo 5m)"
+      ;;
+  esac
 
   # line 4: sess
   if [ -n "$session_pct" ]; then

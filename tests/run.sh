@@ -5,8 +5,9 @@
 # is replaced with a scratch git repo on branch "feature" with an untracked file, and @tmp@ in a
 # payload, transcript, script a transcript runs (*.py) or seed with the dir of the other scratch
 # repos (session-repos cases).
-# cases/<name>.state and cases/<name>.repos, if present, seed statusline-state/<session_id> and
-# <session_id>.repos of the case before it runs; @line1@ in a seed is the byte size of the first
+# cases/<name>.state, cases/<name>.repos and cases/<name>.rewind, if present, seed
+# statusline-state/<session_id>, <session_id>.repos and <session_id>.rewind of the case before it
+# runs; @line1@ in a seed is the byte size of the first
 # line of the case transcript. gh is a stub that fails, so no case reaches the network.
 # Usage: bash tests/run.sh [--update]   (--update rewrites the snapshots after an intended change)
 cd "$(dirname "$0")" || exit 1
@@ -76,12 +77,12 @@ for f in cases/*.json; do
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
   payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
     'walk(if . == "@repo@" then $repo elif type == "string" then gsub("@tmp@"; $tmp) else . end)' "$f") || exit 1
-  for ext in state repos; do
+  for ext in state repos rewind; do
     [ -f "cases/$name.$ext" ] || continue
     sid=$(printf '%s' "$payload" | jq -r .session_id)
     line1=$(head -n 1 "$(printf '%s' "$payload" | jq -r .transcript_path)" 2>/dev/null | wc -c | tr -d ' ')
     target="$config/statusline-state/$sid"
-    [ "$ext" = repos ] && target="$target.repos"
+    [ "$ext" = state ] || target="$target.$ext"
     mkdir -p "$config/statusline-state" &&
       sed -e "s#@tmp@#$tmp#g" -e "s#@line1@#$line1#g" "cases/$name.$ext" > "$target" || exit 1
   done

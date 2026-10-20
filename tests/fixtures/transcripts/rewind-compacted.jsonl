@@ -1,0 +1,15 @@
+{"parentUuid":null,"type":"user","timestamp":"2026-10-18T10:00:00.000Z","message":{"role":"user","content":"prompt 1"},"uuid":"aaaaaaaa-0000-0000-0000-703100000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-703100000000","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"uuid":"aaaaaaaa-0000-0000-0000-613100000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-613100000000","type":"system","subtype":"turn_duration","durationMs":60000,"uuid":"aaaaaaaa-0000-0000-0000-643100000000"}
+{"parentUuid":null,"logicalParentUuid":"aaaaaaaa-0000-0000-0000-643100000000","type":"system","subtype":"compact_boundary","uuid":"aaaaaaaa-0000-0000-0000-633100000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-633100000000","type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"},"uuid":"aaaaaaaa-0000-0000-0000-733100000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-733100000000","type":"user","timestamp":"2026-10-18T11:00:00.000Z","message":{"role":"user","content":"prompt 2"},"uuid":"aaaaaaaa-0000-0000-0000-703200000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-703200000000","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"uuid":"aaaaaaaa-0000-0000-0000-613200000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-613200000000","type":"system","subtype":"turn_duration","durationMs":120000,"uuid":"aaaaaaaa-0000-0000-0000-643200000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-643200000000","type":"user","timestamp":"2026-10-18T12:00:00.000Z","message":{"role":"user","content":"prompt 3"},"uuid":"aaaaaaaa-0000-0000-0000-703300000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-703300000000","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"uuid":"aaaaaaaa-0000-0000-0000-613300000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-613300000000","type":"system","subtype":"turn_duration","durationMs":180000,"uuid":"aaaaaaaa-0000-0000-0000-643300000000"}
+{"type":"last-prompt","leafUuid":"aaaaaaaa-0000-0000-0000-643200000000","explicit":true,"sessionId":"x"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-643200000000","type":"user","timestamp":"2026-10-18T13:00:00.000Z","message":{"role":"user","content":"prompt 4"},"uuid":"aaaaaaaa-0000-0000-0000-703400000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-703400000000","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"uuid":"aaaaaaaa-0000-0000-0000-613400000000"}
+{"parentUuid":"aaaaaaaa-0000-0000-0000-613400000000","type":"system","subtype":"turn_duration","durationMs":30000,"uuid":"aaaaaaaa-0000-0000-0000-643400000000"}

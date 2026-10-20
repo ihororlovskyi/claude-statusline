@@ -7,6 +7,7 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 ↳  acme/skills git:(dev) ✗ · PR #109
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
+      cche:██░░░░░░░░ 25%  12:45  0h 45m  ttl 1h
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
 
@@ -40,7 +41,8 @@ The installer:
 ```json
 "statusLine": {
   "type": "command",
-  "command": "bash ~/.claude/statusline.sh"
+  "command": "bash ~/.claude/statusline.sh",
+  "refreshInterval": 60
 },
 "subagentStatusLine": {
   "type": "command",
@@ -67,6 +69,7 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 - next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
 - context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;
 - at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since; the total and the count since the last compaction are white, a `0` right after a compaction stays gray). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either. After `/rewind` only the prompts of the active branch count (`0 prompts` when it went back to the start), and the agent time below drops the turns of the dropped branch too;
+- prompt cache (`cche`): how much of its lifetime has passed since the last request of the session, when it expires in local time, the time left (`expired` after that) and its TTL (`ttl 5m` or `ttl 1h`). Every request reads the cache and restarts its TTL, so a pause longer than that makes the next prompt write the whole context to the cache again: more expensive on the API, more of the `sess`/`week` limits on a subscription. Taken from the last response in the session transcript, timed from the entry it answers (the request moment); the TTL is the larger of the 1h and 5m writes of the last response that wrote to the cache. Shown only when the transcript tail has a response that used the cache. The installer sets `refreshInterval: 60` (a value already set is kept), so the line moves while the session is idle;
 - 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
 - at the end of the last line (`week`, on Enterprise/Team `rest`): the time the agent has worked in the session in white (the `turn_duration` entries Claude Code writes when a turn ends, plus a turn still running), then `+` the time of the current or last prompt in gray (`1h 13m  +5m 32s`);
 
@@ -80,6 +83,7 @@ Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate
 ➜  my-project git:(main) ✗  Opus 5.5 medium
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88  +$0.12
+      cche:██░░░░░░░░ 25%  12:45  0h 45m  ttl 1h
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
 ```
 
@@ -89,6 +93,7 @@ If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-
 
 ```
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
+      cche:██░░░░░░░░ 25%  12:45  0h 45m  ttl 1h
       used:████░░░░░░ 42%  $210.00/$500  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
 ```

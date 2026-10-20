@@ -603,6 +603,40 @@ EOF
   [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"
   printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
 
+  # line 3b: prompt cache, from the last main-chain response in the transcript tail; a cache read
+  # restarts the TTL, so it runs from the request that got that response (the entry the first
+  # block of the response hangs off), and the TTL type is the larger write of the last response
+  # that wrote to the cache
+  cache_info=""
+  [ -f "$transcript" ] && cache_info=$(tail -c 1048576 "$transcript" 2>/dev/null | jq -nrR '
+    def at: if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end;
+    [inputs | fromjson? | select(type == "object" and .isSidechain != true)] |
+    (map(select(.type == "assistant" and (.message.usage | type) == "object"))) as $a |
+    ($a | last) as $l |
+    select($l != null) |
+    (map(select(.uuid != null) | {key: .uuid, value: .timestamp}) | from_entries) as $ts |
+    ($a | map(select(.message.id == $l.message.id)) | first) as $f |
+    (($ts[$f.parentUuid // ""] // $f.timestamp) | at) as $at |
+    ($a | map(.message.usage | select((.cache_creation_input_tokens // 0) > 0)) | last) as $w |
+    if $w == null then (select(($l.message.usage.cache_read_input_tokens // 0) > 0) | 300)
+    elif ($w.cache_creation.ephemeral_1h_input_tokens // 0) > ($w.cache_creation.ephemeral_5m_input_tokens // 0) then 3600
+    else 300 end |
+    select($at != null) | "\($at | floor) \(.)"' 2>/dev/null)
+  case "$cache_info" in
+    [0-9]*" "[0-9]*)
+      cache_at=${cache_info% *} cache_ttl=${cache_info#* }
+      cache_exp=$(( cache_at + cache_ttl ))
+      cache_pct=$(( (now - cache_at) * 100 / cache_ttl ))
+      [ "$cache_pct" -lt 0 ] && cache_pct=0
+      [ "$cache_pct" -gt 100 ] && cache_pct=100
+      cache_left="expired"
+      [ "$now" -lt "$cache_exp" ] && cache_left=$(fmt_eta_hm $(( cache_exp - now )))
+      printf "%s%s  $gray%s  %s  ttl %s\033[0m\n" "$p6" "$(render_bar "cche" "$cache_pct")" \
+        "$(LC_ALL=C date -r "$cache_exp" "+%H:%M" 2>/dev/null || LC_ALL=C date -d "@$cache_exp" "+%H:%M" 2>/dev/null)" \
+        "$cache_left" "$([ "$cache_ttl" -eq 3600 ] && echo 1h || echo 5m)"
+      ;;
+  esac
+
   # line 4: sess
   if [ -n "$session_pct" ]; then
     sess_bar=$(render_bar "sess" "$session_pct")

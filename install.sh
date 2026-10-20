@@ -63,5 +63,10 @@ elif ! jq -e '.prStatusFooterEnabled == false' "$GLOBAL" > /dev/null 2>&1; then
   jq '.prStatusFooterEnabled = false' "$GLOBAL" > "$tmp/claude.json"
   mv "$tmp/claude.json" "$GLOBAL"
   echo "set prStatusFooterEnabled: false in $GLOBAL (backup: $GLOBAL.bak)"
+else
+  echo "prStatusFooterEnabled is already false in $GLOBAL"
 fi
-echo "done - claude-statusline $version installed, restart Claude Code to pick up the status line"
+# green only on a terminal, so logs and CI get plain text
+done_word=done
+[ -t 1 ] && done_word=$(printf '\033[0;32mdone\033[0m')
+echo "$done_word - claude-statusline $version installed, restart Claude Code to pick up the status line"

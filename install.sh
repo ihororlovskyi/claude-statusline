@@ -45,7 +45,7 @@ cp "$SETTINGS" "$SETTINGS.bak"
 # custom dirs are single-quoted so spaces and shell metacharacters survive in the command
 dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
 [ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
-# refreshInterval re-renders an idle status line, so the cche bar keeps moving; a value already set is kept
+# refreshInterval re-renders an idle status line, so the session times keep moving; a value already set is kept
 jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
   '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}
   | .subagentStatusLine = {type: "command", command: $sub}' \

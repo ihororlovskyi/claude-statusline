@@ -79,6 +79,14 @@ fmt_reset_at() {
 }
 
 p6="      "
+# awk durations: "1h 5m", "4m 2s", "9s"
+awk_fmt='
+  function fmt(x) {
+    x = int(x)
+    if (x >= 3600) return sprintf("%dh %dm", x / 3600, (x % 3600) / 60)
+    if (x >= 60) return sprintf("%dm %ds", x / 60, x % 60)
+    return sprintf("%ds", x)
+  }'
 
 # line 1: model + effort level; models without effort show nothing after the name
 model_str=""
@@ -423,7 +431,7 @@ count_prompts() {
       else empty end
     end) |
   (map(select(.k != "T") | .k) | join("")),
-  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
+  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end) \(["-", "-"] + map(select(.k == "P") | .at // "-" | tostring) | .[-2:] | join(" "))"
   end' 2>/dev/null
 }
 # a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
@@ -577,13 +585,7 @@ EOF
 }')
   # agent time: the finished turns plus a running one in white, then "+" the running or last turn
   # in gray, at the end of the last line (week, else rest, else cntx)
-  time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" -v g="$gray" '
-  function fmt(x) {
-    x = int(x)
-    if (x >= 3600) return sprintf("%dh %dm", x / 3600, (x % 3600) / 60)
-    if (x >= 60) return sprintf("%dm %ds", x / 60, x % 60)
-    return sprintf("%ds", x)
-  }
+  time_str=$(LC_ALL=C awk -v t="$turns" -v now="$(date +%s)" -v g="$gray" "$awk_fmt"'
   BEGIN {
     if (split(t, f, " ") < 3) exit
     sum = f[1] / 1000; last = f[2] / 1000
@@ -604,40 +606,6 @@ EOF
   # without a sess line the cost goes on the used line, else here
   [ -z "$session_pct" ] && { [ -z "$spend_pct" ] || [ -z "$spend_used" ]; } && ctx_info="$ctx_info$cost_str"
   printf "%s%s  %s\n" "$p6" "$ctx_bar" "$ctx_info"
-
-  # line 3b: prompt cache, from the last main-chain response in the transcript tail; a cache read
-  # restarts the TTL, so it runs from the request that got that response (the entry the first
-  # block of the response hangs off), and the TTL type is the larger write of the last response
-  # that wrote to the cache
-  cache_info=""
-  [ -f "$transcript" ] && cache_info=$(tail -c 1048576 "$transcript" 2>/dev/null | jq -nrR '
-    def at: if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end;
-    [inputs | fromjson? | select(type == "object" and .isSidechain != true)] |
-    (map(select(.type == "assistant" and (.message.usage | type) == "object"))) as $a |
-    ($a | last) as $l |
-    select($l != null) |
-    (map(select(.uuid != null) | {key: .uuid, value: .timestamp}) | from_entries) as $ts |
-    ($a | map(select(.message.id == $l.message.id)) | first) as $f |
-    (($ts[$f.parentUuid // ""] // $f.timestamp) | at) as $at |
-    ($a | map(.message.usage | select((.cache_creation_input_tokens // 0) > 0)) | last) as $w |
-    if $w == null then (select(($l.message.usage.cache_read_input_tokens // 0) > 0) | 300)
-    elif ($w.cache_creation.ephemeral_1h_input_tokens // 0) > ($w.cache_creation.ephemeral_5m_input_tokens // 0) then 3600
-    else 300 end |
-    select($at != null) | "\($at | floor) \(.)"' 2>/dev/null)
-  case "$cache_info" in
-    [0-9]*" "[0-9]*)
-      cache_at=${cache_info% *} cache_ttl=${cache_info#* }
-      cache_exp=$(( cache_at + cache_ttl ))
-      cache_pct=$(( (now - cache_at) * 100 / cache_ttl ))
-      [ "$cache_pct" -lt 0 ] && cache_pct=0
-      [ "$cache_pct" -gt 100 ] && cache_pct=100
-      cache_left="expired"
-      [ "$now" -lt "$cache_exp" ] && cache_left=$(fmt_eta_hm $(( cache_exp - now )))
-      printf "%s%s  $gray%s  %s  ttl %s\033[0m\n" "$p6" "$(render_bar "cche" "$cache_pct")" \
-        "$(LC_ALL=C date -r "$cache_exp" "+%H:%M" 2>/dev/null || LC_ALL=C date -d "@$cache_exp" "+%H:%M" 2>/dev/null)" \
-        "$cache_left" "$([ "$cache_ttl" -eq 3600 ] && echo 1h || echo 5m)"
-      ;;
-  esac
 
   # line 4: sess
   if [ -n "$session_pct" ]; then
@@ -674,5 +642,30 @@ EOF
     fi
   fi
 fi
+
+# last line: when the session started (its first transcript entry, also after /rewind), how long
+# it has been going, and "+" the gap between the last two prompts
+start=""
+# (a file-history-snapshot comes first, its timestamp nested)
+[ -f "$transcript" ] && start=$(grep -m 1 -E '"type":"(user|assistant|system)"' "$transcript" 2>/dev/null |
+  jq -r '.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor' 2>/dev/null)
+case "$start" in
+  [0-9]*)
+    now=$(date +%s)
+    # a session from another day names the day
+    fmt=+%H:%M
+    [ $(( now - start )) -ge 86400 ] && fmt="+%a %H:%M"
+    started=$(LC_ALL=C date -r "$start" "$fmt" 2>/dev/null || LC_ALL=C date -d "@$start" "$fmt" 2>/dev/null)
+    LC_ALL=C awk -v s="$start" -v at="$started" -v t="$turns" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    BEGIN {
+      d = now > s ? now - s : 0
+      printf "%s%ssession started\033[0m \033[0;37m%s\033[0m  %sgoing\033[0m \033[0;37m%s\033[0m", p6, g, at, g,
+        (d >= 86400 ? sprintf("%dd %dh %dm", d / 86400, (d % 86400) / 3600, (d % 3600) / 60) : fmt(d))
+      n = split(t, f, " ")
+      if (n >= 5 && f[4] != "-" && f[5] != "-" && f[5] - f[4] >= 1) printf "  %s+%s\033[0m", g, fmt(f[5] - f[4])
+      printf "\n"
+    }'
+    ;;
+esac
 
 exit 0

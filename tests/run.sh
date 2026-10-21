@@ -1,7 +1,7 @@
 #!/bin/bash
 # Snapshot tests: render every payload in cases/ and compare it with expected/<name>.txt.
 # panel-* cases go to the agent panel script, the rest to the main status line.
-# cache-* cases get a config dir with a fresh usage-cache.json and no skills; cche-* cases run at a
+# cache-* cases get a config dir with a fresh usage-cache.json and no skills; every case runs at a
 # fixed now, 2026-10-20 12:00 UTC (a date stub answers "date +%s"); @repo@ in a payload
 # is replaced with a scratch git repo on branch "feature" with an untracked file, and @tmp@ in a
 # payload, transcript, script a transcript runs (*.py) or seed with the dir of the other scratch
@@ -72,11 +72,10 @@ for f in cases/*.json; do
   name=$(basename "$f" .json)
   script=statusline.sh
   # skills come from fixtures, not the real ~/.claude
-  config="$tmp/config" fake_now=""
+  config="$tmp/config"
   case "$name" in
     panel-*) script=subagent-statusline.sh ;;
     cache-*) config="$tmp/cache-config" ;;
-    cche-*) fake_now=1792497600 ;;
   esac
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
   payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
@@ -91,7 +90,7 @@ for f in cases/*.json; do
       sed -e "s#@tmp@#$tmp#g" -e "s#@line1@#$line1#g" "cases/$name.$ext" > "$target" || exit 1
   done
   # the rest: bar measures today's date against the billing month
-  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" FAKE_NOW="$fake_now" bash "../scripts/$script" |
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" FAKE_NOW=1792497600 bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
   expected="expected/$name.txt"
   if [ -n "$update" ]; then

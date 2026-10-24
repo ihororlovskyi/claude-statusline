@@ -1,5 +1,8 @@
 {"transcript_path":"fixtures/session.jsonl","tasks":[
 {"id":"a1","status":"running","label":"opus with deduplicated usage","tokenCount":157601,"model":"claude-opus-5-5"},
+"not a task",
+{"id":{"x":1},"status":"running","label":"object id is skipped"},
+{"id":"../a1","status":"running","label":"id with a slash is skipped"},
 {"id":"a2","status":"running","label":"haiku\nwith newline","tokenCount":100000,"model":"claude-haiku-4-5-20251001"},
 {"id":"a3","status":"running","description":"model from transcript, nested effort ignored","tokenCount":99999},
 {"id":"a4","status":"running","label":"half cent $0.125 rounds up","tokenCount":125000,"model":"claude-haiku-4-5-20251001"},

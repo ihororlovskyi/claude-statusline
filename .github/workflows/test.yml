@@ -14,10 +14,13 @@ jobs:
       - run: bash tests/run.sh
       # twice over a changed script: the second run must back it up; a space in the dir
       # checks that the commands written to settings.json still run; the first run has no
-      # .claude.json to change, the second turns off the footer PR badge and keeps other keys
+      # .claude.json to change, the second turns off the footer PR badge and keeps other keys;
+      # settings.json.bak stays the file from before the first run
       - name: install.sh
         run: |
           export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude config"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          echo '{"theme":"dark"}' > "$CLAUDE_CONFIG_DIR/settings.json"
           sh install.sh
           echo '# changed' >> "$CLAUDE_CONFIG_DIR/statusline.sh"
           echo '{"numStartups":1,"prStatusFooterEnabled":true}' > "$CLAUDE_CONFIG_DIR/.claude.json"
@@ -27,6 +30,15 @@ jobs:
           settings="$CLAUDE_CONFIG_DIR/settings.json"
           jq -e '.statusLine.type == "command" and .statusLine.refreshInterval == 60 and .subagentStatusLine.type == "command"' "$settings"
           jq -e '.prStatusFooterEnabled == false and .numStartups == 1' "$CLAUDE_CONFIG_DIR/.claude.json"
+          jq -e '. == {"theme":"dark"}' "$settings.bak"
           sh -c "$(jq -r .statusLine.command "$settings")" < tests/cases/pro-full.json | grep -q .
           sh -c "$(jq -r .subagentStatusLine.command "$settings")" < tests/cases/panel-rows.json | grep -q .
+      # an invalid settings.json stops the install before any file is written
+      - name: install.sh with invalid settings.json
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/broken"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          printf '{' > "$CLAUDE_CONFIG_DIR/settings.json"
+          sh install.sh && exit 1
+          [ ! -e "$CLAUDE_CONFIG_DIR/statusline.sh" ] && [ "$(cat "$CLAUDE_CONFIG_DIR/settings.json")" = "{" ]
 

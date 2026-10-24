@@ -15,7 +15,7 @@ Custom status line for Claude Code: `scripts/statusline.sh` renders the main sta
 ## How it works
 
 - `scripts/statusline.sh` receives the main status line payload and prints several lines with ANSI colors.
-- `scripts/subagent-statusline.sh` receives a payload with `tasks[]` and prints one JSON line `{"id": ..., "content": ...}` per task. For tasks that are not `running`, `content` is empty and the row is hidden.
+- `scripts/subagent-statusline.sh` receives a payload with `tasks[]` and prints one JSON line `{"id": ..., "content": ...}` per task. For tasks that are not `running`, `content` is empty and the row is hidden. A task that is not an object, or whose `id` is not a string or has a slash or control characters, is skipped without a row: one jq error would end the stream and drop every later row.
 
 Main status line details:
 
@@ -42,7 +42,7 @@ Agent panel details:
   - effort requested in the prompt text changes nothing in the transcript, and Haiku may refuse such a prompt as an injection;
   - an agent does not know its own effort: asked to report it, it echoes the prompt or guesses, so never trust a self-report;
   - edits to `.claude/agents/*.md` (including new files) take effect only after restarting Claude Code.
-- The payload has no agent name either (`tasks[].type` is the task kind). `agentType` from `<session>/subagents/agent-<id>.meta.json`, an undocumented file next to the transcript (observed October 2026: `agentType`, `description`, `toolUseId`, `spawnDepth`), is shown first in blue (`\033[0;34m`), for running rows only; `general-purpose` and `fork` are skipped as noise, control characters become spaces. Without the file or the field, the row is as before.
+- The payload has no agent name either (`tasks[].type` is the task kind). `agentType` from `<session>/subagents/agent-<id>.meta.json`, an undocumented file next to the transcript (observed October 2026: `agentType`, `description`, `toolUseId`, `spawnDepth`), is shown first in blue (`\033[0;34m`), for running rows only, `general-purpose` and `fork` included (parallel agents of one type are otherwise indistinguishable; until v0.0.13 both were hidden); control characters become spaces. Without the file or the field, the row is as before.
 - Token colors: see thresholds in Colors.
 - Background shells are not part of the payload, so they cannot be shown as rows.
 - Payload fields (observed October 2026): `tasks[]` with `id`, `type`, `status`, `description`, `label`, `startTime`, `model`, `contextWindowSize`, `tokenCount`, `tokenSamples`, `cwd`; top level has `transcript_path`, `columns`, `session_id`. Older versions may omit `model`, in which case the model is read from the agent transcript. When only a background shell is running, the script is not called at all.
@@ -61,7 +61,7 @@ Keep them consistent with the main status line:
 
 ## Installation
 
-The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`). The last line names the installed version: `$BRANCH` when downloading (the tag in the release asset, else the branch), `git describe --tags --always --dirty` of the clone otherwise.
+The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`, only when the file changes, so a rerun keeps the backup from before the install. The new `settings.json` is built before any file is written: an invalid one stops the install with nothing changed. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`). The last line names the installed version: `$BRANCH` when downloading (the tag in the release asset, else the branch), `git describe --tags --always --dirty` of the clone otherwise.
 
 Releases: a pushed `v*` tag runs `.github/workflows/release.yml`: the snapshot tests, then a GitHub release with `install.sh` as its asset, its default branch set to the tag, so the README command (`releases/latest/download/install.sh`) installs the scripts of that tag. GitHub counts the asset downloads, the only install count there is (raw downloads are not counted): `gh api repos/ihororlovskyi/claude-statusline/releases --jq '[.[].assets[] | select(.name == "install.sh") | .download_count] | add'`. It counts downloads, not successful installs. Tags only after the merge to `main` and only on request. Every tag is a patch bump of the last one (`v0.0.3` → `v0.0.4`), also for new features.
 
@@ -73,7 +73,7 @@ Run the snapshot tests: `PATH="/bin:$PATH" bash tests/run.sh` (the installed scr
 
 After an intended output change, regenerate the snapshots with `bash tests/run.sh --update` and review `git diff tests/expected` before committing. Add a case for every new branch of the output.
 
-After changes in the repo, update the installed copy: `sh install.sh`, only when the user asks: it writes `~/.claude` and overwrites `settings.json.bak` on every run. To try the installer, set `CLAUDE_CONFIG_DIR="$(mktemp -d)"` (seed `.claude.json` with `{}` to cover the `prStatusFooterEnabled` step).
+After changes in the repo, update the installed copy: `sh install.sh`, only when the user asks: it writes `~/.claude` and overwrites `settings.json.bak` whenever it changes the file. To try the installer, set `CLAUDE_CONFIG_DIR="$(mktemp -d)"` (seed `.claude.json` with `{}` to cover the `prStatusFooterEnabled` step).
 
 To see a real payload, temporarily add `printf '%s' "$input" > /tmp/statusline-payload.json` after `input=$(cat)` in the installed `~/.claude/statusline.sh`, then restore it with `sh install.sh`.
 

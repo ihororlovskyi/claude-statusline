@@ -1,1 +1,2 @@
 {"type":"assistant","message":{"id":"h1","model":"claude-haiku-5-5","usage":{"input_tokens":90000,"output_tokens":20000}}}
+{"type":"assistant","message":"not an object"}

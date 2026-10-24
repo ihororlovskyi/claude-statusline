@@ -29,6 +29,18 @@ else
   done
 fi
 
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+# custom dirs are single-quoted so spaces and shell metacharacters survive in the command
+dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
+[ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
+# built before any file is written, so an invalid settings.json stops the install with nothing changed;
+# refreshInterval re-renders an idle status line, so the session times keep moving; a value already set is kept
+jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
+  '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}
+  | .subagentStatusLine = {type: "command", command: $sub}' \
+  "$SETTINGS" > "$tmp/settings.json" ||
+  { echo "error: $SETTINGS is not valid JSON, nothing was changed" >&2; exit 1; }
+
 for f in $FILES; do
   target="$CLAUDE_DIR/$f"
   if [ -f "$target" ] && ! cmp -s "$tmp/$f" "$target"; then
@@ -40,18 +52,14 @@ for f in $FILES; do
   echo "installed $target"
 done
 
-[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-cp "$SETTINGS" "$SETTINGS.bak"
-# custom dirs are single-quoted so spaces and shell metacharacters survive in the command
-dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
-[ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
-# refreshInterval re-renders an idle status line, so the session times keep moving; a value already set is kept
-jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
-  '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}
-  | .subagentStatusLine = {type: "command", command: $sub}' \
-  "$SETTINGS" > "$tmp/settings.json"
-mv "$tmp/settings.json" "$SETTINGS"
-echo "updated $SETTINGS (backup: $SETTINGS.bak)"
+# the backup is made only when the file changes, so a rerun keeps the one from before the install
+if cmp -s "$tmp/settings.json" "$SETTINGS"; then
+  echo "$SETTINGS is already set up"
+else
+  cp "$SETTINGS" "$SETTINGS.bak"
+  mv "$tmp/settings.json" "$SETTINGS"
+  echo "updated $SETTINGS (backup: $SETTINGS.bak)"
+fi
 
 # global config: ~/.claude.json, or .claude.json inside CLAUDE_CONFIG_DIR when it is set;
 # Claude Code owns the file, so a missing one is not created and only this key is changed

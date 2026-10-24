@@ -5,8 +5,10 @@ input=$(cat)
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 subagents_dir="${transcript%.jsonl}/subagents"
 # \037 instead of tab: read collapses consecutive tabs; tojson escapes newlines and \037,
-# so one task stays one record
-echo "$input" | jq -r '.tasks[] | [.id, (.status // ""), tojson] | join("\u001f")' |
+# so one task stays one record; a malformed task or id is skipped, as a jq error would end the stream
+# (the id names files, so no slash or control characters)
+echo "$input" | jq -r '.tasks | arrays | .[] | objects | select(.id | strings | test("^[^/\u0000-\u001f]+$"))
+  | [.id, (.status | strings // ""), tojson] | join("\u001f")' |
 while IFS="$(printf '\037')" read -r id status task; do
   [ -z "$id" ] && continue
   agent_file="$subagents_dir/agent-$id.jsonl"
@@ -40,7 +42,7 @@ while IFS="$(printf '\037')" read -r id status task; do
     if $t.status != "running" then {id: $t.id, content: ""} else
     [inputs | fromjson? | objects | select(.type == "assistant")] as $a
     # older payloads have no model field; fall back to the agent transcript
-    | (($t.model | strings | select(. != "")) // ([$a[].message.model | strings | select(startswith("claude"))] | last) // "")
+    | (($t.model | strings | select(. != "")) // ([$a[].message | objects | .model | strings | select(startswith("claude"))] | last) // "")
     # claude-opus-4-8 -> Opus 4.8, claude-haiku-4-5-20251001 -> Haiku 4.5
     | ((sub("^claude-"; "") | capture("^(?<f>opus|sonnet|haiku|fable|mythos)-(?<a>[0-9]+)(-(?<b>[0-9]{1,2}))?([^0-9].*)?$")
         | (.f[:1] | ascii_upcase) + .f[1:] + " " + .a + (if .b then "." + .b else "" end)) // "") as $name

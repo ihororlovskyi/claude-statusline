@@ -36,7 +36,7 @@ sh your-dir-name/install.sh
 The installer:
 
 - copies `scripts/statusline.sh` and `scripts/subagent-statusline.sh` to `~/.claude/` (an existing different file is saved with a `.bak` suffix);
-- sets `statusLine` and `subagentStatusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak`):
+- sets `statusLine` and `subagentStatusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak` when it changes, so a rerun keeps the original; an invalid file stops the installer before anything is written):
 
 ```json
 "statusLine": {

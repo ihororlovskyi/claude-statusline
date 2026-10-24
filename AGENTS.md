@@ -15,7 +15,7 @@ Custom status line for Claude Code: `scripts/statusline.sh` renders the main sta
 ## How it works
 
 - `scripts/statusline.sh` receives the main status line payload and prints several lines with ANSI colors.
-- `scripts/subagent-statusline.sh` receives a payload with `tasks[]` and prints one JSON line `{"id": ..., "content": ...}` per task. For tasks that are not `running`, `content` is empty and the row is hidden.
+- `scripts/subagent-statusline.sh` receives a payload with `tasks[]` and prints one JSON line `{"id": ..., "content": ...}` per task. For tasks that are not `running`, `content` is empty and the row is hidden. A task that is not an object, or whose `id` is not a string or has a slash or control characters, is skipped without a row: one jq error would end the stream and drop every later row.
 
 Main status line details:
 
@@ -61,7 +61,7 @@ Keep them consistent with the main status line:
 
 ## Installation
 
-The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`). The last line names the installed version: `$BRANCH` when downloading (the tag in the release asset, else the branch), `git describe --tags --always --dirty` of the clone otherwise.
+The repo is public: `install.sh` downloads raw files from `raw.githubusercontent.com` without a token. When run from a clone (`scripts/statusline.sh` is next to it), files are copied locally without network access. Before overwriting, `.bak` copies are made for both scripts and `settings.json`, only when the file changes, so a rerun keeps the backup from before the install. The new `settings.json` is built before any file is written: an invalid one stops the install with nothing changed. Add any new installable file to `FILES` in `install.sh` (files are taken from `scripts/`). The last line names the installed version: `$BRANCH` when downloading (the tag in the release asset, else the branch), `git describe --tags --always --dirty` of the clone otherwise.
 
 Releases: a pushed `v*` tag runs `.github/workflows/release.yml`: the snapshot tests, then a GitHub release with `install.sh` as its asset, its default branch set to the tag, so the README command (`releases/latest/download/install.sh`) installs the scripts of that tag. GitHub counts the asset downloads, the only install count there is (raw downloads are not counted): `gh api repos/ihororlovskyi/claude-statusline/releases --jq '[.[].assets[] | select(.name == "install.sh") | .download_count] | add'`. It counts downloads, not successful installs. Tags only after the merge to `main` and only on request. Every tag is a patch bump of the last one (`v0.0.3` → `v0.0.4`), also for new features.
 
@@ -73,7 +73,7 @@ Run the snapshot tests: `PATH="/bin:$PATH" bash tests/run.sh` (the installed scr
 
 After an intended output change, regenerate the snapshots with `bash tests/run.sh --update` and review `git diff tests/expected` before committing. Add a case for every new branch of the output.
 
-After changes in the repo, update the installed copy: `sh install.sh`, only when the user asks: it writes `~/.claude` and overwrites `settings.json.bak` on every run. To try the installer, set `CLAUDE_CONFIG_DIR="$(mktemp -d)"` (seed `.claude.json` with `{}` to cover the `prStatusFooterEnabled` step).
+After changes in the repo, update the installed copy: `sh install.sh`, only when the user asks: it writes `~/.claude` and overwrites `settings.json.bak` whenever it changes the file. To try the installer, set `CLAUDE_CONFIG_DIR="$(mktemp -d)"` (seed `.claude.json` with `{}` to cover the `prStatusFooterEnabled` step).
 
 To see a real payload, temporarily add `printf '%s' "$input" > /tmp/statusline-payload.json` after `input=$(cat)` in the installed `~/.claude/statusline.sh`, then restore it with `sh install.sh`.
 

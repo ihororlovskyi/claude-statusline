@@ -104,7 +104,7 @@ Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_m
 
 One row per running agent: agent type, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
 
-- The agent type (`rc-verifier`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript; the default `general-purpose` and `fork` are not shown, and without the file the row starts with the model.
+- The agent type (`rc-verifier`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript (`general-purpose` and `fork` too); without the file the row starts with the model.
 
 - Effort is the level the agent actually runs with, read from its transcript: the `effort` in the agent's `.claude/agents/*.md` frontmatter, otherwise the session's. Asking for an effort in the prompt text does not change it. Models without effort (Haiku) show none.
 

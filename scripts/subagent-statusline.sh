@@ -58,8 +58,8 @@ while IFS="$(printf '\037')" read -r id status task; do
         | (($u.input_tokens // 0) * $p[0] + $w5m * $p[1] + $w1h * $p[2]
            + ($u.cache_read_input_tokens // 0) * $p[3] + ($u.output_tokens // 0) * $p[4]) * $mult / 1000000)
       | add // 0) catch 0 | . * 100 | round) as $cents
-    # the default types say nothing about the agent; text from a session file: no control characters
-    | ($type | gsub("[\u0000-\u001f\u007f]"; " ") | if . == "general-purpose" or . == "fork" then "" else . end) as $atype
+    # text from a session file: no control characters
+    | ($type | gsub("[\u0000-\u001f\u007f]"; " ")) as $atype
     # tokens: same absolute thresholds and colors as the main cntx line
     | (($t.tokenCount | numbers) // 0 | floor) as $tok
     | {id: $t.id, content: (

@@ -10,6 +10,8 @@
 # statusline-state/<session_id>, <session_id>.repos and <session_id>.rewind of the case before it
 # runs; @line1@ in a seed is the byte size of the first
 # line of the case transcript. gh is a stub that fails, so no case reaches the network.
+# statusline-state/rate-limits (account-wide) is removed before every case and seeded from
+# cases/<name>.limits; limits-* cases append its content after the render to their snapshot.
 # Usage: bash tests/run.sh [--update]   (--update rewrites the snapshots after an intended change)
 cd "$(dirname "$0")" || exit 1
 # fixed timezone for reset times; no global or system git config (status.showUntrackedFiles=no
@@ -89,9 +91,18 @@ for f in cases/*.json; do
     mkdir -p "$config/statusline-state" &&
       sed -e "s#@tmp@#$tmp#g" -e "s#@line1@#$line1#g" "cases/$name.$ext" > "$target" || exit 1
   done
+  # the rate limits cache is shared by all sessions: no case may see the one an earlier case wrote
+  limits="$config/statusline-state/rate-limits"
+  rm -f "$limits"
+  if [ -f "cases/$name.limits" ]; then
+    mkdir -p "$config/statusline-state" && cp "cases/$name.limits" "$limits" || exit 1
+  fi
   # the rest: bar measures today's date against the billing month
   actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" FAKE_NOW=1792497600 bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
+  case "$name" in
+    limits-*) actual=$(printf '%s\nrate-limits: %s' "$actual" "$(cat "$limits" 2>/dev/null || echo none)") ;;
+  esac
   expected="expected/$name.txt"
   if [ -n "$update" ]; then
     printf '%s\n' "$actual" > "$expected"

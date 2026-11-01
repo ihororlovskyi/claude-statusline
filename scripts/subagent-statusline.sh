@@ -14,13 +14,16 @@ while IFS="$(printf '\037')" read -r id status task; do
   agent_file="$subagents_dir/agent-$id.jsonl"
   # finished rows need no transcript; /dev/null gives an empty entry list
   [ "$status" = "running" ] && [ -f "$agent_file" ] || agent_file=/dev/null
-  # agent type (rc-qa, Explore) from the undocumented agent-<id>.meta.json next to the transcript
-  agent_type=""
+  # agent type (rc-qa, Explore) and the Agent tool call description from the undocumented
+  # agent-<id>.meta.json next to the transcript; a missing or malformed file gives {}
+  agent_meta=""
   meta_file="$subagents_dir/agent-$id.meta.json"
   [ "$status" = "running" ] && [ -f "$meta_file" ] &&
-    agent_type=$(jq -r '.agentType | strings' "$meta_file" 2>/dev/null)
+    agent_meta=$(jq -cn 'first(inputs) | objects
+      | {type: (.agentType | strings // ""), desc: (.description | strings // "")}' "$meta_file" 2>/dev/null)
+  [ -n "$agent_meta" ] || agent_meta='{}'
   # one pass over the transcript: model fallback, effort, cost; fromjson? skips a half-written last line
-  jq -cnR --argjson t "$task" --arg type "$agent_type" '
+  jq -cnR --argjson t "$task" --argjson meta "$agent_meta" '
     def paint($c): "\u001b[0;\($c)m\(.)\u001b[0m";
     def commas: if test("^[0-9]{4}") then (.[:-3] | commas) + "," + .[-3:] else . end;
     # USD per MTok: input, 5m write, 1h write, cache read, output
@@ -61,12 +64,17 @@ while IFS="$(printf '\037')" read -r id status task; do
            + ($u.cache_read_input_tokens // 0) * $p[3] + ($u.output_tokens // 0) * $p[4]) * $mult / 1000000)
       | add // 0) catch 0 | . * 100 | round) as $cents
     # text from a session file: no control characters
-    | ($type | gsub("[\u0000-\u001f\u007f]"; " ")) as $atype
+    | ($meta.type // "" | gsub("[\u0000-\u001f\u007f]"; " ")) as $atype
+    # general-purpose and fork say nothing about the task: show the call description instead,
+    # trimmed and cut to 40 characters (jq slices strings by codepoint); named types keep the type
+    | ($meta.desc // "" | gsub("[\u0000-\u001f\u007f]"; " ") | sub("^\\s+"; "") | sub("\\s+$"; "")
+        | if length > 40 then .[:39] + "…" else . end) as $adesc
+    | (if ($atype == "general-purpose" or $atype == "fork") and $adesc != "" then $adesc else $atype end) as $aname
     # tokens: same absolute thresholds and colors as the main cntx line
     | (($t.tokenCount | numbers) // 0 | floor) as $tok
     | {id: $t.id, content: (
         "↳"
-        + (if $atype != "" then " " + ($atype | paint(34)) + " " else "" end)
+        + (if $aname != "" then " " + ($aname | paint(34)) + " " else "" end)
         + (if $name != "" then " " + ($name | paint(35)) else "" end)
         + (if $effort != "" then " " + ($effort | paint(35)) else "" end)
         + "  " + ($tok | tostring | commas | paint(if $tok >= 150000 then 31 elif $tok >= 100000 then 33 else 32 end))

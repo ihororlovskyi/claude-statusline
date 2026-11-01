@@ -102,9 +102,9 @@ Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_m
 
 **Agent panel** (`subagentStatusLine`, `scripts/subagent-statusline.sh`)
 
-One row per running agent: agent type, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
+One row per running agent: agent name, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
 
-- The agent type (`rc-verifier`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript (`general-purpose` and `fork` too); without the file the row starts with the model.
+- The agent name comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript. Named types (`rc-verifier`, `Explore`) show their type, which carries the role. `general-purpose` and `fork` agents show the task `description` the parent gave the Agent tool (`Re-review plan round R4`) instead, cut to 40 characters with `…`; without a description they show the type. Without the file the row starts with the model.
 
 - Effort is the level the agent actually runs with, read from its transcript: the `effort` in the agent's `.claude/agents/*.md` frontmatter, otherwise the session's. Asking for an effort in the prompt text does not change it. Models without effort (Haiku) show none.
 

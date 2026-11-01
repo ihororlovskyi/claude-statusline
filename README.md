@@ -9,7 +9,7 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 
 ↳ rc-verifier  Opus 5.5 low  6,512 tok  $0.05  Running ping in foreground
 ↳ Explore  Haiku 5.5  12,104 tok  $0.01  explorer
@@ -71,7 +71,7 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 - at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since; the total and the count since the last compaction are white, a `0` right after a compaction stays gray). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either. After `/rewind` only the prompts of the active branch count (`0 prompts` when it went back to the start), and the agent time below drops the turns of the dropped branch too;
 - 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset. The first payload after `/restart` has no rate limits until Claude Code gets an API response, so the last ones seen are saved in `~/.claude/statusline-state/rate-limits` (one file for the account) and shown meanwhile with a gray percentage; a cached window whose reset has passed shows an empty bar and `--%` without a reset time. The session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
 - at the end of the last line (`week`, on Enterprise/Team `rest`): the time the agent has worked in the session in white (the `turn_duration` entries Claude Code writes when a turn ends, plus a turn still running), then `+` the time of the current or last prompt in gray (`1h 13m  +5m 32s`);
-- the last line: when the session started in local time (its first transcript entry; with the day name once it is a day old), how long it has been going, and `+` the time between the last two prompts (`session started 09:40  going 3h 12m  +24m 10s`; after `/rewind`, of the active branch). The installer sets `refreshInterval: 60` (a value already set is kept), so the times move while the session is idle;
+- the last line: when the session started in local time (its first transcript entry; with the day name once it is a day old), how long it has been going, and the age of the prompt cache (`session started 09:40  going 3h 12m  cache 2m 41s`). The age is the time since the last API response (the last assistant entry of the transcript; a long turn with tools refreshes it on every step), and its color tells whether the next prompt still reads the context from the cache or writes it again at full price: green under 5 minutes (alive with either cache TTL), yellow from 5 minutes to 1 hour (alive only with the 1-hour TTL, which Claude Code uses almost always), red from 1 hour (expired). When the last response wrote the cache with the 5-minute TTL only, the age turns red from 5 minutes, with no yellow zone. Nothing is shown before the first response. The installer sets `refreshInterval: 60` (a value already set is kept), so the times move while the session is idle; between renders the age and its color can lag by up to a minute;
 
 Bars turn yellow at 50% and red at 80%. Token counts turn yellow at 100,000 and red at 150,000 tokens.
 
@@ -84,7 +84,7 @@ Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate
       thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 ```
 
 The session cost (on the `used` line when it is shown, else on the `cntx` line) is still an API-price estimate from Claude Code, not your contract price.
@@ -95,7 +95,7 @@ If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       used:████░░░░░░ 42%  $210.00/$500  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 ```
 
 Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_minor", "exponent"}, "limit": {"amount_minor", "exponent"}, "percent"}}}`. A cache older than 24 hours is ignored.

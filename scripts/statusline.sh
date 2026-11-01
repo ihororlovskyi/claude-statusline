@@ -48,7 +48,7 @@ git_info=""
 branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
 [ -n "$branch" ] && git_info=$(git_label "$cwd" "$branch")
 
-# labelled progress bar
+# labelled progress bar; $3 is the color of the percentage (default white), $4 replaces its text
 render_bar() {
   label="$1"
   pct_int="$2"
@@ -62,7 +62,7 @@ render_bar() {
   col=32
   [ "$pct_int" -ge 50 ] && col=33
   [ "$pct_int" -ge 80 ] && col=31
-  printf "$gray%s:\033[0m\033[0;%sm%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$col" "$bar" "$pct_int"
+  printf "$gray%s:\033[0m\033[0;%sm%s\033[0m \033[0;%sm%s%%\033[0m" "$label" "$col" "$bar" "${3:-37}" "${4:-$pct_int}"
 }
 
 fmt_eta_hm() {
@@ -103,6 +103,21 @@ nl='
 state_dir="$claude_dir/statusline-state"
 session_ok=""
 case "$session_id" in ''|*[!A-Za-z0-9_-]*) ;; *) session_ok=1 ;; esac
+
+# rate limits belong to the account, not the session: saved whenever the payload has them as
+# "<sess %> <sess reset> <week %> <week reset>" ("-" when absent), so a payload without them (the
+# first one after /restart, until an API response) still draws sess/week, not the Enterprise lines
+limits_cache="$state_dir/rate-limits"
+if [ -n "$session_pct$weekly_pct" ]; then
+  limits_line="${session_pct:--} ${session_reset:--} ${weekly_pct:--} ${weekly_reset:--}"
+  limits_old=""
+  [ -f "$limits_cache" ] && limits_old=$(cat "$limits_cache" 2>/dev/null)
+  # write only on change; a failed write never breaks the render
+  if [ "$limits_line" != "$limits_old" ]; then
+    { mkdir -p "$state_dir" && printf '%s\n' "$limits_line" > "$limits_cache.$$" &&
+      mv -f "$limits_cache.$$" "$limits_cache"; } 2>/dev/null || rm -f "$limits_cache.$$" 2>/dev/null
+  fi
+fi
 
 # owner/repo of the origin remote on GitHub (an ssh alias like github-work counts), else nothing
 gh_slug() {
@@ -541,6 +556,33 @@ if [ -n "$used" ]; then
 
   now=$(date +%s)
 
+  # no rate_limits in the payload, but the account had them: a subscription, drawn from the cache
+  # with a gray percentage, as the values may be stale. A window whose reset has passed has an
+  # unknown usage: an empty bar, "--%" and no reset time (the next 5-hour window starts with the
+  # next message, and the weekly reset moment is not known to be fixed)
+  limits_col="" session_txt="" weekly_txt=""
+  if [ -z "$session_pct" ] && [ -z "$weekly_pct" ] && [ -f "$limits_cache" ]; then
+    c_sp="" c_sr="" c_wp="" c_wr="" c_ok=1
+    read -r c_sp c_sr c_wp c_wr < "$limits_cache" 2>/dev/null
+    # "-" or an integer short enough for test and $(( )), as the script wrote it
+    for v in "$c_sp" "$c_sr" "$c_wp" "$c_wr"; do
+      case "$v" in -) ;; ''|*[!0-9-]*|?*-*|?????????????*) c_ok="" ;; esac
+    done
+    if [ -n "$c_ok" ] && [ "$c_sp$c_wp" != "--" ]; then
+      limits_col=90
+      if [ "$c_sp" != - ]; then
+        session_pct=$c_sp session_reset=""
+        [ "$c_sr" = - ] || session_reset=$c_sr
+        [ -n "$session_reset" ] && [ "$session_reset" -le "$now" ] && session_pct=0 session_txt=-- session_reset=""
+      fi
+      if [ "$c_wp" != - ]; then
+        weekly_pct=$c_wp weekly_reset=""
+        [ "$c_wr" = - ] || weekly_reset=$c_wr
+        [ -n "$weekly_reset" ] && [ "$weekly_reset" -le "$now" ] && weekly_pct=0 weekly_txt=-- weekly_reset=""
+      fi
+    fi
+  fi
+
   # Enterprise: no sess/week limits, so the spend comes from the claude.ai API cache
   spend_used="" spend_limit="" spend_pct=""
   if [ -z "$session_pct" ] && [ -z "$weekly_pct" ]; then
@@ -609,7 +651,7 @@ EOF
 
   # line 4: sess
   if [ -n "$session_pct" ]; then
-    sess_bar=$(render_bar "sess" "$session_pct")
+    sess_bar=$(render_bar "sess" "$session_pct" "$limits_col" "$session_txt")
     if [ -n "$session_reset" ]; then
       printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
     else
@@ -619,7 +661,7 @@ EOF
 
   # line 5: week
   if [ -n "$weekly_pct" ]; then
-    week_bar=$(render_bar "week" "$weekly_pct")
+    week_bar=$(render_bar "week" "$weekly_pct" "$limits_col" "$weekly_txt")
     if [ -n "$weekly_reset" ]; then
       printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))" "$week_time"
     else

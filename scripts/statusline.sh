@@ -446,19 +446,19 @@ count_prompts() {
       else empty end
     end) |
   (map(select(.k != "T") | .k) | join("")),
-  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end) \(["-", "-"] + map(select(.k == "P") | .at // "-" | tostring) | .[-2:] | join(" "))"
+  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
   end' 2>/dev/null
 }
 # a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
 rewind_flag=""
 [ -n "$session_ok" ] && rewind_flag="$state_dir/$session_id.rewind"
 marks="" turns="" leaf=""
+# tail -r is BSD, tac GNU (also for the cache age of the last line)
+rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
 if [ -f "$transcript" ]; then
   if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
   if [ "$scan" = R ]; then
     [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
-    # tail -r is BSD, tac GNU
-    rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
     m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
     u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
     if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
@@ -686,11 +686,20 @@ EOF
 fi
 
 # last line: when the session started (its first transcript entry, also after /rewind), how long
-# it has been going, and "+" the gap between the last two prompts
-start=""
+# it has been going, and the prompt cache age: the time since the last API response, the last
+# assistant entry of the file (read from the end; after /rewind too, as the request still
+# refreshed the cache of the shared prefix). Synthetic entries (API errors, "No response
+# requested") and sidechain ones made no main request; up to 20 matches are tried.
+# "<epoch> <5|->": 5 when that response wrote the cache with the 5-minute TTL only
+start="" cache_at=""
 # (a file-history-snapshot comes first, its timestamp nested)
 [ -f "$transcript" ] && start=$(grep -m 1 -E '"type":"(user|assistant|system)"' "$transcript" 2>/dev/null |
   jq -r '.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor' 2>/dev/null)
+[ -n "$start" ] && cache_at=$($rev "$transcript" 2>/dev/null | grep -m 20 '"type":"assistant"' | jq -nrR '
+  first(inputs | fromjson? | select(type == "object" and .type == "assistant" and .isSidechain != true and .message.model != "<synthetic>")) |
+  (.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor) as $at |
+  (.message.usage.cache_creation | if type == "object" then . else {} end) as $w |
+  "\($at) \(if ($w.ephemeral_5m_input_tokens // 0) > 0 and ($w.ephemeral_1h_input_tokens // 0) == 0 then 5 else "-" end)"' 2>/dev/null)
 case "$start" in
   [0-9]*)
     now=$(date +%s)
@@ -698,13 +707,19 @@ case "$start" in
     fmt=+%H:%M
     [ $(( now - start )) -ge 86400 ] && fmt="+%a %H:%M"
     started=$(LC_ALL=C date -r "$start" "$fmt" 2>/dev/null || LC_ALL=C date -d "@$start" "$fmt" 2>/dev/null)
-    LC_ALL=C awk -v s="$start" -v at="$started" -v t="$turns" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    # both durations name days from a day. The cache age is green while every cache TTL is alive,
+    # yellow once only a 1-hour one can be (from 5 minutes), red from 1 hour; after a response that
+    # wrote the 5-minute TTL only, red from 5 minutes
+    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    function fmtd(x) { return x >= 86400 ? sprintf("%dd %dh %dm", x / 86400, (x % 86400) / 3600, (x % 3600) / 60) : fmt(x) }
     BEGIN {
       d = now > s ? now - s : 0
-      printf "%s%ssession started\033[0m \033[0;37m%s\033[0m  %sgoing\033[0m \033[0;37m%s\033[0m", p6, g, at, g,
-        (d >= 86400 ? sprintf("%dd %dh %dm", d / 86400, (d % 86400) / 3600, (d % 3600) / 60) : fmt(d))
-      n = split(t, f, " ")
-      if (n >= 5 && f[4] != "-" && f[5] != "-" && f[5] - f[4] >= 1) printf "  %s+%s\033[0m", g, fmt(f[5] - f[4])
+      printf "%s%ssession started\033[0m \033[0;37m%s\033[0m  %sgoing\033[0m \033[0;37m%s\033[0m", p6, g, at, g, fmtd(d)
+      if (split(c, f, " ") == 2 && f[1] ~ /^[0-9]+$/) {
+        a = now > f[1] + 0 ? now - f[1] : 0
+        col = (a >= 3600 || (f[2] == "5" && a >= 300) ? "31" : (a >= 300 ? "33" : "32"))
+        printf "  %scache\033[0m \033[0;%sm%s\033[0m", g, col, fmtd(a)
+      }
       printf "\n"
     }'
     ;;

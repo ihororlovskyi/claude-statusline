@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"00000000-0000-4000-8000-000000000001","timestamp":"2026-10-19T09:00:00.000Z","message":{"role":"user","content":"go"}}
+{"parentUuid":"00000000-0000-4000-8000-000000000001","isSidechain":false,"type":"assistant","uuid":"00000000-0000-4000-8000-000000000002","timestamp":"2026-10-19T09:30:00.000Z","message":{"model":"claude-opus-5-5","id":"msg_2","role":"assistant","content":[{"type":"text","text":"ok"}]}}

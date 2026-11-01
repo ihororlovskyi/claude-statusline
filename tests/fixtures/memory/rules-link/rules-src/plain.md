@@ -1,0 +1,11 @@
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.
+rule in a linked dir sample text for the memory estimate fixture. rule in a linked dir sample text for the memory estimate fixture.

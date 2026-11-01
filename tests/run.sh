@@ -61,8 +61,18 @@ cp -R fixtures/project "$tmp/project" && cp -R fixtures/memory "$tmp/memory" || 
 # mem-* cases: their own config dir and home (for @~/ imports), and MEMORY.md of auto memory,
 # whose dir is named after the scratch path: <project> <lines> <bytes per line>
 cp -R fixtures/mem-config "$tmp/mem-config" && cp -R fixtures/mem-home "$tmp/home" || exit 1
+# the same letters and digits as the script: Claude Code keeps only [a-zA-Z0-9] in the dir name,
+# so "café" ends in "caf-" (mem-* cases run in a UTF-8 locale, where a range would keep "é")
+alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+accent=$(jq -rn '"caf\u00e9"') && cp -R fixtures/memory/accent "$tmp/memory/$accent" || exit 1
+long=$(printf '%0250d' 0 | tr 0 x) && cp -R fixtures/memory/cache-long "$tmp/memory/$long" || exit 1
+# a project whose CLAUDE.md is a directory and CLAUDE.local.md a FIFO (awk would wait on it
+# forever), and an import over the 4 MiB limit
+mkdir "$tmp/memory/special/CLAUDE.md" && mkfifo "$tmp/memory/special/CLAUDE.local.md" || exit 1
+awk 'BEGIN { s = sprintf("%79s", ""); gsub(/ /, "x", s); for (i = 0; i < 56000; i++) print s }' \
+  > "$tmp/memory/huge/big.md" || exit 1
 while read -r p n w; do
-  m="$tmp/mem-config/projects/${p//[!A-Za-z0-9]/-}/memory"
+  m="$tmp/mem-config/projects/${p//[!$alnum]/-}/memory"
   mkdir -p "$m" && awk -v n="$n" -v w="$w" 'BEGIN {
     for (i = 1; i <= n; i++) { s = sprintf("- note %03d", i); while (length(s) < w - 1) s = s " text"; print substr(s, 1, w - 1) }
   }' > "$m/MEMORY.md" || exit 1
@@ -71,6 +81,7 @@ $tmp/memory/auto-lines 250 40
 $tmp/memory/auto-bytes 150 300
 $tmp/memory/auto-off 75 40
 $tmp/detached 30 30
+$tmp/memory/caf- 40 30
 AUTO
 # PRs of the scratch repos, fresh so no case refreshes them
 now=$(date +%s)
@@ -91,11 +102,11 @@ for f in cases/*.json; do
   name=$(basename "$f" .json)
   script=statusline.sh
   # skills come from fixtures, not the real ~/.claude
-  config="$tmp/config" home=$HOME
+  config="$tmp/config" home=$HOME lc=${LC_ALL:-}
   case "$name" in
     panel-*) script=subagent-statusline.sh ;;
     cache-*) config="$tmp/cache-config" ;;
-    mem-*) config="$tmp/mem-config" home="$tmp/home" ;;
+    mem-*) config="$tmp/mem-config" home="$tmp/home" lc=en_US.UTF-8 ;;
   esac
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
   payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
@@ -113,13 +124,15 @@ for f in cases/*.json; do
   # the case renders once first and its cached total becomes 300000 bytes, so the snapshot shows
   # whether the cache was read
   pd=$(printf '%s' "$payload" | jq -r '.workspace.project_dir // .cwd // ""')
-  mem_cache="$config/statusline-state/mem-${pd//[!A-Za-z0-9]/-}"
+  key=${pd//[!$alnum]/-}
+  if [ ${#key} -gt 200 ]; then ck=$(printf '%s' "$pd" | cksum); key="${key:0:200}-${ck%% *}"; fi
+  mem_cache="$config/statusline-state/mem-$key"
   if [ -f "cases/$name.mem" ]; then
     mkdir -p "$config/statusline-state" && sed "s#@tmp@#$tmp#g" "cases/$name.mem" > "$mem_cache" || exit 1
   fi
   if [ -f "cases/$name.warm" ]; then
-    printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" bash "../scripts/$script" > /dev/null &&
-      sed -i '' 's/^v1 .*/v1 300000/' "$mem_cache" || exit 1
+    printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" LC_ALL="$lc" bash "../scripts/$script" > /dev/null &&
+      sed -i '' 's/^v2 .*/v2 300000/' "$mem_cache" || exit 1
   fi
   # the rate limits cache is shared by all sessions: no case may see the one an earlier case wrote
   limits="$config/statusline-state/rate-limits"
@@ -128,7 +141,7 @@ for f in cases/*.json; do
     mkdir -p "$config/statusline-state" && cp "cases/$name.limits" "$limits" || exit 1
   fi
   # the rest: bar measures today's date against the billing month
-  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" FAKE_NOW=1792497600 bash "../scripts/$script" |
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" LC_ALL="$lc" FAKE_NOW=1792497600 bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
   case "$name" in
     limits-*) actual=$(printf '%s\nrate-limits: %s' "$actual" "$(cat "$limits" 2>/dev/null || echo none)") ;;

@@ -373,6 +373,10 @@ mem_stat() {
   st=$(stat -L -f '%m %z %N' "$@" 2>/dev/null)
   case "$st" in [0-9]*) ;; *) st=$(stat -L -c '%Y %s %n' "$@" 2>/dev/null) ;; esac
 }
+# the letters and digits spelled out: a range like A-Z also matches accented letters in a UTF-8
+# locale of bash 3.2; Claude Code replaces /[^a-zA-Z0-9]/g, so a character outside the BMP (an
+# emoji) is one "-" here and two there
+alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 # prints "T <bytes>" and "C <path>" for every path it looked at
 mem_count() {
   d=$1 roots="" set_auto=true set_agents=true set_dir=""
@@ -393,23 +397,30 @@ EOF
     [ -n "$m" ] && set_dir=$m
   done
   case "$CLAUDE_CODE_DISABLE_AUTO_MEMORY" in 1|true) set_auto=false ;; esac
-  roots="u $claude_dir/CLAUDE.md${nl}u /Library/Application Support/ClaudeCode/CLAUDE.md${nl}u /etc/claude-code/CLAUDE.md"
+  # every candidate is stat-ed, but only a regular file is read: awk hangs on a FIFO and BSD awk
+  # aborts on a directory
+  root() { printf 'C %s\n' "$2"; [ -f "$2" ] && roots="$roots${nl}$1 $2"; }
+  root u "$claude_dir/CLAUDE.md"
+  root u "/Library/Application Support/ClaudeCode/CLAUDE.md"
+  root u /etc/claude-code/CLAUDE.md
   p=$d
   while :; do
     b=${p%/}
-    roots="$roots${nl}c $b/CLAUDE.md${nl}c $b/.claude/CLAUDE.md${nl}c $b/CLAUDE.local.md${nl}a $b/AGENTS.md${nl}a $b/.claude/AGENTS.md"
+    for f in CLAUDE.md .claude/CLAUDE.md CLAUDE.local.md; do root c "$b/$f"; done
+    for f in AGENTS.md .claude/AGENTS.md; do root a "$b/$f"; done
     [ -z "$b" ] && break
     p=${b%/*}
     [ -z "$p" ] && p=/
   done
-  # rules: every .md below the dirs; the dirs themselves are stat-ed, so an added file shows up
+  # rules: every .md below the dirs; the dirs themselves are stat-ed, so an added file shows up.
+  # -L: rules may be symlinks, and so may the rules dir (find reports a loop and does not follow it)
   for r in "$d/.claude/rules" "$claude_dir/rules"; do
     printf 'C %s\n' "$r"
     [ -d "$r" ] || continue
     while IFS= read -r f; do
-      if [ -d "$f" ]; then printf 'C %s\n' "$f"; else roots="$roots${nl}r $f"; fi
+      if [ -d "$f" ]; then printf 'C %s\n' "$f"; else root r "$f"; fi
     done <<EOF
-$(find "$r" \( -type d -o -type f -name '*.md' \) 2>/dev/null)
+$(find -L "$r" \( -type d -o -type f -name '*.md' \) 2>/dev/null)
 EOF
   done
   if [ "$set_auto" = true ]; then
@@ -427,13 +438,13 @@ EOF
           ?*) top=$(git -C "$d" --no-optional-locks rev-parse --show-toplevel 2>/dev/null) ;;
           *) top=$(cd -P "$d" 2>/dev/null && pwd) ;;
         esac
-        slug=${top//[!A-Za-z0-9]/-}
+        slug=${top//[!$alnum]/-}
       fi
       mem_file="$claude_dir/projects/$slug/memory/MEMORY.md"
     fi
-    roots="$roots${nl}m $mem_file"
+    root m "$mem_file"
   fi
-  printf '%s\n' "$roots" | LC_ALL=C awk -v home="$HOME" -v user="$claude_dir/CLAUDE.md" \
+  printf '%s\n' "${roots#"$nl"}" | LC_ALL=C awk -v home="$HOME" -v user="$claude_dir/CLAUDE.md" \
     -v homeuser="$HOME/.claude/CLAUDE.md" -v agents="$set_agents" '
     function q(s) { gsub(/\047/, "\047\\\047\047", s); return "\047" s "\047" }
     # an import path: relative to the importing file, "~/" from home; "." and ".." folded so one
@@ -473,15 +484,16 @@ EOF
     }
     # kind: u user, c project, a AGENTS.md, r rule, m MEMORY.md, i import; returns 1 when the file
     # exists
-    function load(f, d, kind,    line, r, len, fb, n, t, c, s, i, rest, tok, child, fence, fch, flen, cmt, fm, first, blank, pblank, phead, icode, inlist, code) {
+    function load(f, d, kind,    line, r, len, raw, over, fb, n, t, c, s, i, rest, tok, child, fence, fch, flen, cmt, fm, first, blank, pblank, phead, icode, inlist, code) {
       if (f in seen) return seen[f]
       seen[f] = 0
-      print "C " f
-      # BSD awk aborts on reading a directory, and an import may name one
-      if (kind == "i" && system("test -f " q(f)) != 0) return 0
+      # the roots are regular files already; an import may name a directory or a FIFO
+      if (kind == "i") { print "C " f; if (system("test -f " q(f)) != 0) return 0 }
       first = 1; pblank = 1
       while ((r = (getline line < f)) > 0) {
         len = length(line) + 1
+        # a file over 4 MiB is skipped whole: stop reading it there
+        if ((raw += len) > 4194304) { over = 1; break }
         if (kind == "m") { if (++n > 200 || fb + len > 25000) break; fb += len; continue }
         sub(/\r$/, "", line)
         # rules: the frontmatter is not loaded, and a rule with paths: loads only on demand
@@ -537,8 +549,7 @@ EOF
       close(f)
       # an empty file exists too
       if (r >= 0) seen[f] = 1
-      # a file over 4 MiB is skipped whole
-      if (fb <= 4194304) total += fb
+      if (!over) total += fb
       return seen[f]
     }
     { kind[NR] = substr($0, 1, 1); path[NR] = substr($0, 3) }
@@ -561,13 +572,16 @@ mem_total=""
 mem_dir="${project_dir:-$cwd}"
 case "$mem_dir" in ''|/*) ;; *) mem_dir="$PWD/$mem_dir" ;; esac
 if [ -n "$mem_dir" ]; then
-  mem_cache="$state_dir/mem-${mem_dir//[!A-Za-z0-9]/-}"
+  mem_key=${mem_dir//[!$alnum]/-}
+  # a file name is at most 255 bytes: a long key is cut and gets a hash of the whole dir
+  if [ ${#mem_key} -gt 200 ]; then ck=$(printf '%s' "$mem_dir" | cksum); mem_key="${mem_key:0:200}-${ck%% *}"; fi
+  mem_cache="$state_dir/mem-$mem_key"
   mem_ok="" mem_old="" mem_v=""
   set --
   if [ -f "$mem_cache" ]; then
     while IFS= read -r l; do
       case "$l" in
-        "v1 "*) mem_v=${l#v1 } ;;
+        "v2 "*) mem_v=${l#v2 } ;;
         "P "*) [ "${l#P }" = "$mem_dir" ] && mem_ok=1 ;;
         "C "*) set -- "$@" "${l#C }" ;;
         "S "*) mem_old="${mem_old:+$mem_old$nl}${l#S }" ;;
@@ -588,7 +602,7 @@ EOF
     case "$mem_total" in
       ''|*[!0-9]*) mem_total="" ;;
       *)
-        mem_new="v1 $mem_total${nl}P $mem_dir"
+        mem_new="v2 $mem_total${nl}P $mem_dir"
         for f in "$@"; do mem_new="$mem_new${nl}C $f"; done
         mem_stat "$@"
         while IFS= read -r l; do [ -n "$l" ] && mem_new="$mem_new${nl}S $l"; done <<EOF
@@ -615,6 +629,8 @@ awk_est='
     if (total <= 0) return
     n = total / 3
     u = sprintf("%d", int(n / 100 + 0.5) * 100)
+    # under 50 tokens rounds to ~0: nothing to show
+    if (u == "0") return
     while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
     printf "  %s: ~%s tok", label, u
     if (s > 0) printf " ~%.1f%%", n * 100 / s

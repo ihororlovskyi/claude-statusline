@@ -11,4 +11,13 @@
 {"id":"done","status":"completed","label":"finished row is hidden"},
 {"id":"nofile","status":"running","label":"no transcript","tokenCount":1234567,"model":"claude-opus-4-8"},
 {"id":"other","status":"running","label":"unknown model","model":"gpt-x"},
-{"id":"numlabel","status":"running","label":42,"description":"non-string label falls back to description"}]}
+{"id":"numlabel","status":"running","label":42,"description":"non-string label falls back to description"},
+{"id":"d-gp","status":"running","label":"general-purpose shows its description","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-fork","status":"running","label":"fork shows its description","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-empty","status":"running","label":"empty description keeps the type","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-blank","status":"running","label":"blank after cleanup keeps the type","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-num","status":"running","label":"non-string description keeps the type","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-long","status":"running","label":"long description cut by character","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-40","status":"running","label":"40 characters after trim are not cut","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-ctrl","status":"running","label":"control characters in description","tokenCount":1000,"model":"claude-opus-5-5"},
+{"id":"d-bad","status":"running","label":"malformed meta.json, no type","tokenCount":1000,"model":"claude-opus-5-5"}]}

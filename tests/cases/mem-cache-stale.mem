@@ -1,0 +1,4 @@
+v1 900000
+P @tmp@/memory/cache-stale
+C @tmp@/memory/cache-stale/CLAUDE.md
+S 1 1 @tmp@/memory/cache-stale/CLAUDE.md

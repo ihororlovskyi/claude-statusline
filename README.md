@@ -5,7 +5,7 @@ Custom status line for [Claude Code](https://code.claude.com): `scripts/statusli
 ```
 ➜  my-project git:(main) ✗ · PR #11 · Opus 5.5 medium
 ↳  acme/skills git:(dev) ✗ · PR #109
-      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
+      thnk:on  skll: ~3,100 tok ~0.3%  mem: ~9,800 tok ~1.0%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
@@ -67,6 +67,7 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 - `PR` is gray and the number shows the state, as in the footer badge: yellow waiting for review, green approved, red changes requested, gray `draft` and `closed`, magenta `merged`. The current repo's PR comes from Claude Code (the same data as the footer badge); otherwise, and for the other repos, from `gh pr list`, run in the background at most every 5 minutes per branch with the first logged-in `gh` account that can read the repo (`GH_ACC` from the repo's `.env/.env` first, then the active account), so a new PR shows up on a later render;
 - thinking mode (`thnk:on` / `off`, `no` when unknown);
 - next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
+- after it, the same estimate for memory files, the instructions Claude Code loads into every turn (`mem: ~22,600 tok ~2.3%`, the "Memory files" of `/context`): `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the project dir and every dir above it (`AGENTS.md` and `.claude/AGENTS.md` instead when there is none of them, unless the built-in `agents-md` plugin is off), `~/.claude/CLAUDE.md`, the managed `CLAUDE.md`, rules in the project `.claude/rules/` and `~/.claude/rules/` without `paths:` frontmatter, `@path` imports of all of these up to four hops deep (not inside code spans, code blocks or HTML comments; a missing file is skipped, each file counts once), and the first 200 lines (at most 25,000 bytes) of the auto memory `MEMORY.md` when `autoMemoryEnabled` is on. Whole files are counted at about 3 bytes per token, minus block-level HTML comments and rule frontmatter, which Claude Code strips. In November 2026 it was within 1% of `/context` on a 68 KB setup (Ukrainian and English text). Not counted: `CLAUDE.md` files of subdirectories and path-scoped rules, which load on demand, `claudeMdExcludes`, `--add-dir` dirs, and the `claude-md-and-agents-md` and `managed-only` modes of **Project instructions**; external imports count as approved. The total is cached in `~/.claude/statusline-state/` and recounted when one of the files changes or a new one appears;
 - context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;
 - at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since; the total and the count since the last compaction are white, a `0` right after a compaction stays gray). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either. After `/rewind` only the prompts of the active branch count (`0 prompts` when it went back to the start), and the agent time below drops the turns of the dropped branch too;
 - 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
@@ -81,7 +82,7 @@ Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate
 
 ```
 ➜  my-project git:(main) ✗  Opus 5.5 medium
-      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
+      thnk:on  skll: ~3,100 tok ~0.3%  mem: ~9,800 tok ~1.0%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
       session started 09:40  going 3h 12m  +24m 10s

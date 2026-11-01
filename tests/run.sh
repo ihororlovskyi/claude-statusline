@@ -53,6 +53,23 @@ find "$tmp/transcripts" \( -name '*.jsonl' -o -name '*.py' \) -exec sed -i '' "s
 mkdir "$tmp/cache-config"
 # a copy: cases with a session_id write statusline-state/ into the config dir
 cp -R fixtures/config "$tmp/config" || exit 1
+# projects live in the scratch dir: the memory estimate walks up from the project dir, and inside
+# this checkout it would reach the repo's own CLAUDE.md
+cp -R fixtures/project "$tmp/project" && cp -R fixtures/memory "$tmp/memory" || exit 1
+# mem-* cases: their own config dir and home (for @~/ imports), and MEMORY.md of auto memory,
+# whose dir is named after the scratch path: <project> <lines> <bytes per line>
+cp -R fixtures/mem-config "$tmp/mem-config" && cp -R fixtures/mem-home "$tmp/home" || exit 1
+while read -r p n w; do
+  m="$tmp/mem-config/projects/${p//[!A-Za-z0-9]/-}/memory"
+  mkdir -p "$m" && awk -v n="$n" -v w="$w" 'BEGIN {
+    for (i = 1; i <= n; i++) { s = sprintf("- note %03d", i); while (length(s) < w - 1) s = s " text"; print substr(s, 1, w - 1) }
+  }' > "$m/MEMORY.md" || exit 1
+done <<AUTO
+$tmp/memory/auto-lines 250 40
+$tmp/memory/auto-bytes 150 300
+$tmp/memory/auto-off 75 40
+$tmp/detached 30 30
+AUTO
 # PRs of the scratch repos, fresh so no case refreshes them
 now=$(date +%s)
 mkdir -p "$tmp/config/statusline-state" && cat > "$tmp/config/statusline-state/pr-cache" <<PRS || exit 1
@@ -72,10 +89,11 @@ for f in cases/*.json; do
   name=$(basename "$f" .json)
   script=statusline.sh
   # skills come from fixtures, not the real ~/.claude
-  config="$tmp/config"
+  config="$tmp/config" home=$HOME
   case "$name" in
     panel-*) script=subagent-statusline.sh ;;
     cache-*) config="$tmp/cache-config" ;;
+    mem-*) config="$tmp/mem-config" home="$tmp/home" ;;
   esac
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
   payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
@@ -89,8 +107,20 @@ for f in cases/*.json; do
     mkdir -p "$config/statusline-state" &&
       sed -e "s#@tmp@#$tmp#g" -e "s#@line1@#$line1#g" "cases/$name.$ext" > "$target" || exit 1
   done
+  # cases/<name>.mem seeds the memory estimate cache of the case project; with cases/<name>.warm
+  # the case renders once first and its cached total becomes 300000 bytes, so the snapshot shows
+  # whether the cache was read
+  pd=$(printf '%s' "$payload" | jq -r '.workspace.project_dir // .cwd // ""')
+  mem_cache="$config/statusline-state/mem-${pd//[!A-Za-z0-9]/-}"
+  if [ -f "cases/$name.mem" ]; then
+    mkdir -p "$config/statusline-state" && sed "s#@tmp@#$tmp#g" "cases/$name.mem" > "$mem_cache" || exit 1
+  fi
+  if [ -f "cases/$name.warm" ]; then
+    printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" bash "../scripts/$script" > /dev/null &&
+      sed -i '' 's/^v1 .*/v1 300000/' "$mem_cache" || exit 1
+  fi
   # the rest: bar measures today's date against the billing month
-  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" FAKE_NOW=1792497600 bash "../scripts/$script" |
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" FAKE_NOW=1792497600 bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
   expected="expected/$name.txt"
   if [ -n "$update" ]; then

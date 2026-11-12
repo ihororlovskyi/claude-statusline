@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"wt"},"promptId":"p1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/detached/x.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/wt-tree/w.md"}}]}}

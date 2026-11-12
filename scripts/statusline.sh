@@ -350,7 +350,11 @@ while IFS= read -r root; do
   [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
   repo_pr=""
   [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
-  printf "${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+  # a linked worktree has a git dir apart from the common one; its folder name tells it from the main checkout
+  wt=""
+  [ "$(git -C "$root" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" ] &&
+    wt=$(printf " ${gray}wt:\033[0m$cyan%s\033[0m" "$(basename "$root")")
+  printf "${gray}↳\033[0m  $cyan%s\033[0m%s%s%s\n" "$name" "$wt" "$(git_label "$root" "$label")" "$repo_pr"
 done <<EOF
 $roots
 EOF

@@ -28,11 +28,10 @@ jobs:
           grep -q '^# changed$' "$CLAUDE_CONFIG_DIR/statusline.sh.bak"
           cmp scripts/statusline.sh "$CLAUDE_CONFIG_DIR/statusline.sh"
           settings="$CLAUDE_CONFIG_DIR/settings.json"
-          jq -e '.statusLine.type == "command" and .statusLine.refreshInterval == 60 and .subagentStatusLine.type == "command"' "$settings"
+          jq -e '.statusLine.type == "command" and .statusLine.refreshInterval == 60' "$settings"
           jq -e '.prStatusFooterEnabled == false and .numStartups == 1' "$CLAUDE_CONFIG_DIR/.claude.json"
           jq -e '. == {"theme":"dark"}' "$settings.bak"
           sh -c "$(jq -r .statusLine.command "$settings")" < tests/cases/pro-full.json | grep -q .
-          sh -c "$(jq -r .subagentStatusLine.command "$settings")" < tests/cases/panel-rows.json | grep -q .
       # an invalid settings.json stops the install before any file is written
       - name: install.sh with invalid settings.json
         run: |

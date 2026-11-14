@@ -1,6 +1,6 @@
 # claude-statusline
 
-Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel.
+Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel (Claude Code 2.1.322 and earlier only, see "Agent panel" below).
 
 ```
 ➜  my-project git:(main) ✗ · PR #11 · Opus 5.5 medium
@@ -35,20 +35,18 @@ sh your-dir-name/install.sh
 
 The installer:
 
-- copies `scripts/statusline.sh` and `scripts/subagent-statusline.sh` to `~/.claude/` (an existing different file is saved with a `.bak` suffix);
-- sets `statusLine` and `subagentStatusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak` when it changes, so a rerun keeps the original; an invalid file stops the installer before anything is written):
+- copies `scripts/statusline.sh` to `~/.claude/` (an existing different file is saved with a `.bak` suffix);
+- sets `statusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak` when it changes, so a rerun keeps the original; an invalid file stops the installer before anything is written):
 
 ```json
 "statusLine": {
   "type": "command",
   "command": "bash ~/.claude/statusline.sh",
   "refreshInterval": 60
-},
-"subagentStatusLine": {
-  "type": "command",
-  "command": "bash ~/.claude/subagent-statusline.sh"
 }
 ```
+
+An existing `subagentStatusLine` key is left as it is (Claude Code 2.1.323+ ignores it). The installer does not copy `scripts/subagent-statusline.sh`; for Claude Code 2.1.322 and earlier see "Agent panel" below.
 
 - turns off the PR badge in the prompt footer, as the status line shows the PR itself: sets `"prStatusFooterEnabled": false` in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when it is set; previous file saved as `.claude.json.bak`, other keys are kept). A missing file is not created, the installer only warns. To bring the badge back, turn on **Show PR status footer** in `/config`.
 
@@ -103,6 +101,15 @@ Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_m
 
 **Agent panel** (`subagentStatusLine`, `scripts/subagent-statusline.sh`)
 
+> **Note:** Claude Code 2.1.323 removed the `subagentStatusLine` setting. From that version the script is not called and the panel shows the built-in format (`● main`, `○ general-purpose <description>  14s · ↓ 67.7k tokens`); settings files that still hold the key load as before ([changelog 2.1.323](https://code.claude.com/docs/en/changelog)). The description below and the `↳ ...` rows apply to Claude Code 2.1.322 and earlier. The installer no longer sets it up: copy `scripts/subagent-statusline.sh` to `~/.claude/` and add this to `settings.json` by hand (Claude Code 2.1.322 and earlier):
+
+```json
+"subagentStatusLine": {
+  "type": "command",
+  "command": "bash ~/.claude/subagent-statusline.sh"
+}
+```
+
 One row per running agent: agent name, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
 
 - The agent name comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript. Named types (`rc-verifier`, `Explore`) show their type, which carries the role. `general-purpose` and `fork` agents show the task `description` the parent gave the Agent tool (`Re-review plan round R4`) instead, cut to 40 characters with `…`; without a description they show the type. Without the file the row starts with the model.
@@ -112,6 +119,6 @@ One row per running agent: agent name, model, effort level, tokens used, estimat
 - Tokens use the same color thresholds as the `cntx` token count: yellow at 100,000, red at 150,000.
 - Cost is not part of the Claude Code payload, so it is estimated from the agent transcript's `usage` and public [API pricing](https://platform.claude.com/docs/en/about-claude/pricing), including cache writes/reads, fast mode, and US-only inference. Update the price table in `scripts/subagent-statusline.sh` when pricing changes.
 
-Background shells are not passed to `subagentStatusLine`, so they cannot be shown as rows.
+On Claude Code 2.1.322 and earlier, background shells are not passed to `subagentStatusLine`, so they cannot be shown as rows.
 
 Have fun! ;)

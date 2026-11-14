@@ -1,14 +1,14 @@
 # claude-statusline
 
-Custom status line for Claude Code: `scripts/statusline.sh` renders the main status line (`statusLine`), `scripts/subagent-statusline.sh` renders the agent panel rows (`subagentStatusLine`).
+Custom status line for Claude Code: `scripts/statusline.sh` renders the main status line (`statusLine`), `scripts/subagent-statusline.sh` renders the agent panel rows (`subagentStatusLine`, only for Claude Code 2.1.322 and earlier: 2.1.323 removed the setting, and the installer no longer sets it up).
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `scripts/statusline.sh` | Main status line. `jq` + `awk`; has a `#!/bin/sh` shebang but relies on bash (`&>`) and BSD `date -v` (macOS), so always run it via `bash` |
-| `scripts/subagent-statusline.sh` | Agent panel rows, same dependencies |
-| `install.sh` | Installer: puts both scripts into `~/.claude/`, sets both keys in `settings.json` and `prStatusFooterEnabled: false` in the global config via `jq` |
+| `scripts/subagent-statusline.sh` | Agent panel rows, same dependencies; Claude Code ≤2.1.322, set up by hand, not installed |
+| `install.sh` | Installer: puts `statusline.sh` into `~/.claude/`, sets `statusLine` in `settings.json` (an existing `subagentStatusLine` is left alone) and `prStatusFooterEnabled: false` in the global config via `jq` |
 | `README.md` | User-facing documentation |
 | `tests/run.sh` | Snapshot tests for both scripts, see Verifying changes |
 

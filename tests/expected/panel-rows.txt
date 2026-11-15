@@ -8,3 +8,12 @@
 {"id":"nofile","content":"↳ \u001b[0;35mOpus 4.8\u001b[0m  \u001b[0;31m1,234,567\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  no transcript"}
 {"id":"other","content":"↳  \u001b[0;32m0\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  unknown model"}
 {"id":"numlabel","content":"↳  \u001b[0;32m0\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  non-string label falls back to description"}
+{"id":"d-gp","content":"↳ \u001b[0;34mRe-review plan round R4\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  general-purpose shows its description"}
+{"id":"d-fork","content":"↳ \u001b[0;34mFork side task\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  fork shows its description"}
+{"id":"d-empty","content":"↳ \u001b[0;34mgeneral-purpose\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  empty description keeps the type"}
+{"id":"d-blank","content":"↳ \u001b[0;34mgeneral-purpose\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  blank after cleanup keeps the type"}
+{"id":"d-num","content":"↳ \u001b[0;34mfork\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  non-string description keeps the type"}
+{"id":"d-long","content":"↳ \u001b[0;34mПеревірити довгий опис агента, який не …\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  long description cut by character"}
+{"id":"d-40","content":"↳ \u001b[0;34mExactly forty characters long, not cut!!\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  40 characters after trim are not cut"}
+{"id":"d-ctrl","content":"↳ \u001b[0;34mReview [31m plan now\u001b[0m  \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  control characters in description"}
+{"id":"d-bad","content":"↳ \u001b[0;35mOpus 5.5\u001b[0m  \u001b[0;32m1,000\u001b[0m \u001b[0;90mtok\u001b[0m  \u001b[0;36m$0.00\u001b[0m  malformed meta.json, no type"}

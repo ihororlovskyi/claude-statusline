@@ -1,15 +1,15 @@
 # claude-statusline
 
-Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel.
+Custom status line for [Claude Code](https://code.claude.com): `scripts/statusline.sh` renders the main status line, `scripts/subagent-statusline.sh` renders the per-agent rows in the agent panel (Claude Code 2.1.322 and earlier only, see "Agent panel" below).
 
 ```
 ➜  my-project git:(main) ✗ · PR #11 · Opus 5.5 medium
 ↳  acme/skills git:(dev) ✗ · PR #109
-      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
+      thnk:on  skll: ~3,100 tok ~0.3%  mem: ~9,800 tok ~1.0%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       sess:░░░░░░░░░░ 9%  Mon 19:00  0h 53m  $0.88  +$0.12
       week:████░░░░░░ 45%  Tue 21:10  1d 3h 3m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 
 ↳ rc-verifier  Opus 5.5 low  6,512 tok  $0.05  Running ping in foreground
 ↳ Explore  Haiku 5.5  12,104 tok  $0.01  explorer
@@ -35,20 +35,18 @@ sh your-dir-name/install.sh
 
 The installer:
 
-- copies `scripts/statusline.sh` and `scripts/subagent-statusline.sh` to `~/.claude/` (an existing different file is saved with a `.bak` suffix);
-- sets `statusLine` and `subagentStatusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak` when it changes, so a rerun keeps the original; an invalid file stops the installer before anything is written):
+- copies `scripts/statusline.sh` to `~/.claude/` (an existing different file is saved with a `.bak` suffix);
+- sets `statusLine` in `~/.claude/settings.json` (previous file saved as `settings.json.bak` when it changes, so a rerun keeps the original; an invalid file stops the installer before anything is written):
 
 ```json
 "statusLine": {
   "type": "command",
   "command": "bash ~/.claude/statusline.sh",
   "refreshInterval": 60
-},
-"subagentStatusLine": {
-  "type": "command",
-  "command": "bash ~/.claude/subagent-statusline.sh"
 }
 ```
+
+An existing `subagentStatusLine` key is left as it is (Claude Code 2.1.323+ ignores it). The installer does not copy `scripts/subagent-statusline.sh`; for Claude Code 2.1.322 and earlier see "Agent panel" below.
 
 - turns off the PR badge in the prompt footer, as the status line shows the PR itself: sets `"prStatusFooterEnabled": false` in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when it is set; previous file saved as `.claude.json.bak`, other keys are kept). A missing file is not created, the installer only warns. To bring the badge back, turn on **Show PR status footer** in `/config`.
 
@@ -63,28 +61,29 @@ Requirements: `jq`, `curl`, `awk` (macOS defaults are fine); `gh` (logged in) fo
 **Main status line**
 
 - directory (the repo root inside a git repo, so a `cd` into a subfolder keeps the repo name; a worktree shows its own folder), git branch with dirty marker, the pull request of the branch (`· PR #11`; `MR` for a GitLab merge request), then model and effort level (omitted for models without effort);
-- one `↳` line per other git repo the session edited (`Edit`, `Write` and `NotebookEdit` calls of the session and its agents, and from shell commands `git -C <dir>` with a writing subcommand (`commit`, `add`, `push`, `checkout`, ...); a command is taken part by part (split at `;`, `&&`, `||`, `|` and new lines, a heredoc staying with its part): a part that writes (`sed -i`, `mv`, `python`, ...) adds every literal `/` or `~/` path in it, heredoc included, and in the script it runs (`python3 <file>`), but not the script itself, a part that only redirects adds the redirect target, and a command with such a part adds `cd <dir>`; a path in a shell variable, as in a loop, or built in code is not seen, and a repo the writing part only reads still counts): `owner/repo` of its GitHub `origin` (the owner is dropped when it matches the current repo's, the folder name without a GitHub remote), branch (a short hash on a detached HEAD), dirty marker and PR. A path through a symlink counts as the repo it points to;
+- one `↳` line per other git repo the session edited (`Edit`, `Write` and `NotebookEdit` calls of the session and its agents, and from shell commands `git -C <dir>` with a writing subcommand (`commit`, `add`, `push`, `checkout`, ...); a command is taken part by part (split at `;`, `&&`, `||`, `|` and new lines, a heredoc staying with its part): a part that writes (`sed -i`, `mv`, `python`, ...) adds every literal `/` or `~/` path in it, heredoc included, and in the script it runs (`python3 <file>`), but not the script itself, a part that only redirects adds the redirect target, and a command with such a part adds `cd <dir>`; a path in a shell variable, as in a loop, or built in code is not seen, and a repo the writing part only reads still counts): `owner/repo` of its GitHub `origin` (the owner is dropped when it matches the current repo's, the folder name without a GitHub remote), branch (a short hash on a detached HEAD), dirty marker and PR. A linked git worktree gets its folder name after the name (`acme/lib wt:lib-fix git:(fix)`), so it differs from the main checkout of the same repo. A path through a symlink counts as the repo it points to;
 - `PR` is gray and the number shows the state, as in the footer badge: yellow waiting for review, green approved, red changes requested, gray `draft` and `closed`, magenta `merged`. The current repo's PR comes from Claude Code (the same data as the footer badge); otherwise, and for the other repos, from `gh pr list`, run in the background at most every 5 minutes per branch with the first logged-in `gh` account that can read the repo (`GH_ACC` from the repo's `.env/.env` first, then the active account), so a new PR shows up on a later render;
 - thinking mode (`thnk:on` / `off`, `no` when unknown);
 - next to it, an estimate of the context taken by the skill listing (`skll: ~3,100 tok ~0.3%`, share of the context window): `name` + `description` from `SKILL.md` frontmatter in the project `.claude/skills/` and `~/.claude/skills/`, about 3 characters per token; plugin skills and skills with `disable-model-invocation: true` are not counted;
+- after it, the same estimate for memory files, the instructions Claude Code loads into every turn (`mem: ~22,600 tok ~2.3%`, the "Memory files" of `/context`): `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the project dir and every dir above it (`AGENTS.md` and `.claude/AGENTS.md` instead when there is none of them, unless the built-in `agents-md` plugin is off), `~/.claude/CLAUDE.md`, the managed `CLAUDE.md`, rules in the project `.claude/rules/` and `~/.claude/rules/` without `paths:` frontmatter, `@path` imports of all of these up to four hops deep (not inside code spans, code blocks or HTML comments; a missing file is skipped, each file counts once), and the first 200 lines (at most 25,000 bytes) of the auto memory `MEMORY.md` when `autoMemoryEnabled` is on. Whole files are counted at about 3 bytes per token, minus block-level HTML comments and rule frontmatter, which Claude Code strips. In November 2026 it was within 1% of `/context` on a 68 KB setup (Ukrainian and English text). Not counted: `CLAUDE.md` files of subdirectories and path-scoped rules, which load on demand, `claudeMdExcludes`, `--add-dir` dirs, and the `claude-md-and-agents-md` and `managed-only` modes of **Project instructions**; external imports count as approved. The total is cached in `~/.claude/statusline-state/` and recounted when one of the files changes or a new one appears;
 - context window usage bar with tokens used / window size, then how much the context has grown since the current prompt started (`+777 tok`, same color as the token count; hidden when it has not grown, on the first render of a session and when the payload has no `session_id`). The prompt boundary comes from the session transcript; per-session state lives in `~/.claude/statusline-state/` and files idle for 7 days are removed;
 - at the end of the same line, the number of prompts in the session (`13 prompts`), and after a compaction the prompts before each one and since the last (`8·4·1`: 8 prompts, compacted, 4 more, compacted, 1 since; the total and the count since the last compaction are white, a `0` right after a compaction stays gray). Counted from user entries in the session transcript: tool results, slash-command and `!` shell entries, agent notifications and `/compact` itself are not prompts, so a prompt that starts with `<` or `/compact` is not counted either. After `/rewind` only the prompts of the active branch count (`0 prompts` when it went back to the start), and the agent time below drops the turns of the dropped branch too;
-- 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset; the session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
+- 5-hour session and 7-day weekly rate limit bars with the reset moment in local time and time to reset. The first payload after `/restart` has no rate limits until Claude Code gets an API response, so the last ones seen are saved in `~/.claude/statusline-state/rate-limits` (one file for the account) and shown meanwhile with a gray percentage; a cached window whose reset has passed shows an empty bar and `--%` without a reset time. The session cost sits on the `sess` line (with no rate limits, on the `used` line, or on the `cntx` line when there is no `used` line), followed by the cost of the current prompt so far (`+$0.12`, from the same per-session state as `+777 tok`; hidden below one cent and on the first prompt of a session, where it would repeat the session cost);
 - at the end of the last line (`week`, on Enterprise/Team `rest`): the time the agent has worked in the session in white (the `turn_duration` entries Claude Code writes when a turn ends, plus a turn still running), then `+` the time of the current or last prompt in gray (`1h 13m  +5m 32s`);
-- the last line: when the session started in local time (its first transcript entry; with the day name once it is a day old), how long it has been going, and `+` the time between the last two prompts (`session started 09:40  going 3h 12m  +24m 10s`; after `/rewind`, of the active branch). The installer sets `refreshInterval: 60` (a value already set is kept), so the times move while the session is idle;
+- the last line: when the session started in local time (its first transcript entry; with the day name once it is a day old), how long it has been going, and the age of the prompt cache (`session started 09:40  going 3h 12m  cache 2m 41s`). The age is the time since the last API response (the last assistant entry of the transcript; a long turn with tools refreshes it on every step), and its color tells whether the next prompt still reads the context from the cache or writes it again at full price: green under 5 minutes (alive with either cache TTL), yellow from 5 minutes to 1 hour (alive only with the 1-hour TTL, which Claude Code uses almost always), red from 1 hour (expired). When the last response wrote the cache with the 5-minute TTL only, the age turns red from 5 minutes, with no yellow zone. Nothing is shown before the first response. The installer sets `refreshInterval: 60` (a value already set is kept), so the times move while the session is idle; between renders the age and its color can lag by up to a minute;
 
 Bars turn yellow at 50% and red at 80%. Token counts turn yellow at 100,000 and red at 150,000 tokens.
 
 **Enterprise / Team accounts**
 
-Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate_limits` and the `sess` / `week` bars are not shown. Instead the last line shows how much of the billing month has passed and the time left until the reset (1st of the month, 00:00 UTC):
+Usage-based plans have no 5-hour and 7-day limits, so Claude Code sends no `rate_limits` and the `sess` / `week` bars are not shown (unless rate limits were saved earlier from a subscription in the same config dir: that cache is removed after 7 days without changes). Instead the last line shows how much of the billing month has passed and the time left until the reset (1st of the month, 00:00 UTC):
 
 ```
 ➜  my-project git:(main) ✗  Opus 5.5 medium
-      thnk:on  skll: ~3,100 tok ~0.3%  13 prompts  8·4·1
+      thnk:on  skll: ~3,100 tok ~0.3%  mem: ~9,800 tok ~1.0%  13 prompts  8·4·1
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 ```
 
 The session cost (on the `used` line when it is shown, else on the `cntx` line) is still an API-price estimate from Claude Code, not your contract price.
@@ -95,22 +94,31 @@ If `~/.claude/usage-cache.json` exists (written by an optional `~/.claude/usage-
       cntx:░░░░░░░░░░ 4%  40,213 tok /1M  +777 tok
       used:████░░░░░░ 42%  $210.00/$500  $0.88  +$0.12
       rest:█░░░░░░░░░ 12%  27d 4h 24m  1h 13m  +5m 32s
-      session started 09:40  going 3h 12m  +24m 10s
+      session started 09:40  going 3h 12m  cache 2m 41s
 ```
 
 Expected cache shape: `{"timestamp": <ms>, "data": {"spend": {"used": {"amount_minor", "exponent"}, "limit": {"amount_minor", "exponent"}, "percent"}}}`. A cache older than 24 hours is ignored.
 
 **Agent panel** (`subagentStatusLine`, `scripts/subagent-statusline.sh`)
 
-One row per running agent: agent type, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
+> **Note:** Claude Code 2.1.323 removed the `subagentStatusLine` setting. From that version the script is not called and the panel shows the built-in format (`● main`, `○ general-purpose <description>  14s · ↓ 67.7k tokens`); settings files that still hold the key load as before ([changelog 2.1.323](https://code.claude.com/docs/en/changelog)). The description below and the `↳ ...` rows apply to Claude Code 2.1.322 and earlier. The installer no longer sets it up: copy `scripts/subagent-statusline.sh` to `~/.claude/` and add this to `settings.json` by hand (Claude Code 2.1.322 and earlier):
 
-- The agent type (`rc-verifier`, `Explore`) comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript (`general-purpose` and `fork` too); without the file the row starts with the model.
+```json
+"subagentStatusLine": {
+  "type": "command",
+  "command": "bash ~/.claude/subagent-statusline.sh"
+}
+```
+
+One row per running agent: agent name, model, effort level, tokens used, estimated cost, current activity. Finished agents are hidden.
+
+- The agent name comes from the `agent-<id>.meta.json` Claude Code writes next to the agent transcript. Named types (`rc-verifier`, `Explore`) show their type, which carries the role. `general-purpose` and `fork` agents show the task `description` the parent gave the Agent tool (`Re-review plan round R4`) instead, cut to 40 characters with `…`; without a description they show the type. Without the file the row starts with the model.
 
 - Effort is the level the agent actually runs with, read from its transcript: the `effort` in the agent's `.claude/agents/*.md` frontmatter, otherwise the session's. Asking for an effort in the prompt text does not change it. Models without effort (Haiku) show none.
 
 - Tokens use the same color thresholds as the `cntx` token count: yellow at 100,000, red at 150,000.
 - Cost is not part of the Claude Code payload, so it is estimated from the agent transcript's `usage` and public [API pricing](https://platform.claude.com/docs/en/about-claude/pricing), including cache writes/reads, fast mode, and US-only inference. Update the price table in `scripts/subagent-statusline.sh` when pricing changes.
 
-Background shells are not passed to `subagentStatusLine`, so they cannot be shown as rows.
+On Claude Code 2.1.322 and earlier, background shells are not passed to `subagentStatusLine`, so they cannot be shown as rows.
 
 Have fun! ;)

@@ -1,0 +1,13 @@
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.
+cache long sample text for the memory estimate fixture. cache long sample text for the memory estimate fixture.

@@ -48,7 +48,7 @@ git_info=""
 branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
 [ -n "$branch" ] && git_info=$(git_label "$cwd" "$branch")
 
-# labelled progress bar
+# labelled progress bar; $3 is the color of the percentage (default white), $4 replaces its text
 render_bar() {
   label="$1"
   pct_int="$2"
@@ -62,7 +62,7 @@ render_bar() {
   col=32
   [ "$pct_int" -ge 50 ] && col=33
   [ "$pct_int" -ge 80 ] && col=31
-  printf "$gray%s:\033[0m\033[0;%sm%s\033[0m \033[0;37m%s%%\033[0m" "$label" "$col" "$bar" "$pct_int"
+  printf "$gray%s:\033[0m\033[0;%sm%s\033[0m \033[0;%sm%s%%\033[0m" "$label" "$col" "$bar" "${3:-37}" "${4:-$pct_int}"
 }
 
 fmt_eta_hm() {
@@ -103,6 +103,21 @@ nl='
 state_dir="$claude_dir/statusline-state"
 session_ok=""
 case "$session_id" in ''|*[!A-Za-z0-9_-]*) ;; *) session_ok=1 ;; esac
+
+# rate limits belong to the account, not the session: saved whenever the payload has them as
+# "<sess %> <sess reset> <week %> <week reset>" ("-" when absent), so a payload without them (the
+# first one after /restart, until an API response) still draws sess/week, not the Enterprise lines
+limits_cache="$state_dir/rate-limits"
+if [ -n "$session_pct$weekly_pct" ]; then
+  limits_line="${session_pct:--} ${session_reset:--} ${weekly_pct:--} ${weekly_reset:--}"
+  limits_old=""
+  [ -f "$limits_cache" ] && limits_old=$(cat "$limits_cache" 2>/dev/null)
+  # write only on change; a failed write never breaks the render
+  if [ "$limits_line" != "$limits_old" ]; then
+    { mkdir -p "$state_dir" && printf '%s\n' "$limits_line" > "$limits_cache.$$" &&
+      mv -f "$limits_cache.$$" "$limits_cache"; } 2>/dev/null || rm -f "$limits_cache.$$" 2>/dev/null
+  fi
+fi
 
 # owner/repo of the origin remote on GitHub (an ssh alias like github-work counts), else nothing
 gh_slug() {
@@ -335,12 +350,274 @@ while IFS= read -r root; do
   [ -n "$slug" ] && [ "${slug%%/*}" = "${cwd_slug%%/*}" ] && name=${slug#*/}
   repo_pr=""
   [ -n "$br" ] && repo_pr=$(pr_cached "$slug" "$br" "$root")
-  printf "${gray}↳\033[0m  $cyan%s\033[0m%s%s\n" "$name" "$(git_label "$root" "$label")" "$repo_pr"
+  # a linked worktree has a git dir apart from the common one; its folder name tells it from the main checkout
+  wt=""
+  [ "$(git -C "$root" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" ] &&
+    wt=$(printf " ${gray}wt:\033[0m$cyan%s\033[0m" "$(basename "$root")")
+  printf "${gray}↳\033[0m  $cyan%s\033[0m%s%s%s\n" "$name" "$wt" "$(git_label "$root" "$label")" "$repo_pr"
 done <<EOF
 $roots
 EOF
 
-# line 2: thinking + skills estimate + prompts
+# line 2: thinking + skills and memory estimates + prompts
+# memory: the files Claude Code loads into every turn (the "Memory files" of /context), estimated
+# like the skills. Walking from the project dir up to /: CLAUDE.md, .claude/CLAUDE.md and
+# CLAUDE.local.md (AGENTS.md and .claude/AGENTS.md instead when none of them exists and the
+# built-in agents-md plugin is on); the user and managed CLAUDE.md; project and user .claude/rules
+# without paths: frontmatter; @path imports of all of them, up to four hops; MEMORY.md of auto
+# memory (the first 200 lines, at most 25,000 bytes). Checked against /context of 2.1.316 in
+# November 2026. Parsing every file each render would cost more than the rest of line 2, so the
+# total is kept in statusline-state/mem-<project dir> with "<mtime> <size> <path>" of every file
+# it looked at (missing ones too, so a new file shows up) and is recounted when one stat changes
+# sets st; BSD stat first: GNU stat takes -f for file system info, which starts with no mtime;
+# -L: a symlinked CLAUDE.md (dotfiles) changes with its target
+mem_stat() {
+  st=""
+  [ $# -gt 0 ] || return 0
+  st=$(stat -L -f '%m %z %N' "$@" 2>/dev/null)
+  case "$st" in [0-9]*) ;; *) st=$(stat -L -c '%Y %s %n' "$@" 2>/dev/null) ;; esac
+}
+# the letters and digits spelled out: a range like A-Z also matches accented letters in a UTF-8
+# locale of bash 3.2; Claude Code replaces /[^a-zA-Z0-9]/g, so a character outside the BMP (an
+# emoji) is one "-" here and two there
+alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+# prints "T <bytes>" and "C <path>" for every path it looked at
+mem_count() {
+  d=$1 roots="" set_auto=true set_agents=true set_dir=""
+  # settings: user, project, local; a later one wins
+  for f in "$claude_dir/settings.json" "$d/.claude/settings.json" "$d/.claude/settings.local.json"; do
+    printf 'C %s\n' "$f"
+    [ -f "$f" ] || continue
+    v=$(jq -r 'if type == "object" then [
+        (.autoMemoryEnabled | if type == "boolean" then tostring else "" end),
+        (.enabledPlugins | if type == "object" then .["agents-md@builtin"] else null end | if type == "boolean" then tostring else "" end),
+        (.autoMemoryDirectory | if type == "string" then . else "" end)
+      ] | join("\u001f") else empty end' "$f" 2>/dev/null) || continue
+    IFS=$(printf '\037') read -r a g m <<EOF
+$v
+EOF
+    [ -n "$a" ] && set_auto=$a
+    [ -n "$g" ] && set_agents=$g
+    [ -n "$m" ] && set_dir=$m
+  done
+  case "$CLAUDE_CODE_DISABLE_AUTO_MEMORY" in 1|true) set_auto=false ;; esac
+  # every candidate is stat-ed, but only a regular file is read: awk hangs on a FIFO and BSD awk
+  # aborts on a directory
+  root() { printf 'C %s\n' "$2"; [ -f "$2" ] && roots="$roots${nl}$1 $2"; }
+  root u "$claude_dir/CLAUDE.md"
+  root u "/Library/Application Support/ClaudeCode/CLAUDE.md"
+  root u /etc/claude-code/CLAUDE.md
+  p=$d
+  while :; do
+    b=${p%/}
+    for f in CLAUDE.md .claude/CLAUDE.md CLAUDE.local.md; do root c "$b/$f"; done
+    for f in AGENTS.md .claude/AGENTS.md; do root a "$b/$f"; done
+    [ -z "$b" ] && break
+    p=${b%/*}
+    [ -z "$p" ] && p=/
+  done
+  # rules: every .md below the dirs; the dirs themselves are stat-ed, so an added file shows up.
+  # -L: rules may be symlinks, and so may the rules dir (find reports a loop and does not follow it)
+  for r in "$d/.claude/rules" "$claude_dir/rules"; do
+    printf 'C %s\n' "$r"
+    [ -d "$r" ] || continue
+    while IFS= read -r f; do
+      if [ -d "$f" ]; then printf 'C %s\n' "$f"; else root r "$f"; fi
+    done <<EOF
+$(find -L "$r" \( -type d -o -type f -name '*.md' \) 2>/dev/null)
+EOF
+  done
+  if [ "$set_auto" = true ]; then
+    if [ -n "$set_dir" ]; then
+      case "$set_dir" in "~/"*) set_dir="$HOME/${set_dir#"~/"}" ;; esac
+      mem_file="${set_dir%/}/MEMORY.md"
+    else
+      # one dir per git repository (worktrees share the main one), else the project dir; the name
+      # is the path with every character other than a letter or a digit turned into "-"
+      slug=$CLAUDE_CODE_PROJECT_DIR_NAME
+      if [ -z "$slug" ]; then
+        top=$(git -C "$d" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+        case "$top" in
+          */.git) top=${top%/.git} ;;
+          ?*) top=$(git -C "$d" --no-optional-locks rev-parse --show-toplevel 2>/dev/null) ;;
+          *) top=$(cd -P "$d" 2>/dev/null && pwd) ;;
+        esac
+        slug=${top//[!$alnum]/-}
+      fi
+      mem_file="$claude_dir/projects/$slug/memory/MEMORY.md"
+    fi
+    root m "$mem_file"
+  fi
+  printf '%s\n' "${roots#"$nl"}" | LC_ALL=C awk -v home="$HOME" -v user="$claude_dir/CLAUDE.md" \
+    -v homeuser="$HOME/.claude/CLAUDE.md" -v agents="$set_agents" '
+    function q(s) { gsub(/\047/, "\047\\\047\047", s); return "\047" s "\047" }
+    # an import path: relative to the importing file, "~/" from home; "." and ".." folded so one
+    # file reached two ways is counted once
+    function resolve(f, tok,    p, n, parts, out, i, m) {
+      if (tok ~ /\/$/) return ""
+      if (substr(tok, 1, 2) == "~/") p = home substr(tok, 2)
+      else if (substr(tok, 1, 1) == "/") p = tok
+      else { p = f; sub(/\/[^\/]*$/, "", p); p = p "/" tok }
+      n = split(p, parts, "/"); m = 0
+      for (i = 2; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (m) m--; continue }
+        out[++m] = parts[i]
+      }
+      p = ""
+      for (i = 1; i <= m; i++) p = p "/" out[i]
+      return p == "" ? "/" : p
+    }
+    # code spans hide imports: a run of n backticks up to the next run of exactly n; a run with no
+    # match is plain text
+    function nospan(s,    out, n, run, rest, scan, pos, k) {
+      out = ""
+      while (match(s, /`+/)) {
+        n = RLENGTH; run = substr(s, RSTART, n)
+        out = out substr(s, 1, RSTART - 1)
+        rest = substr(s, RSTART + n)
+        k = 0; scan = rest; pos = 0
+        while (match(scan, /`+/)) {
+          pos += RSTART + RLENGTH - 1
+          if (RLENGTH == n) { k = pos; break }
+          scan = substr(scan, RSTART + RLENGTH)
+        }
+        if (k) { out = out "x"; s = substr(rest, k + 1) } else { out = out run; s = rest }
+      }
+      return out s
+    }
+    # kind: u user, c project, a AGENTS.md, r rule, m MEMORY.md, i import; returns 1 when the file
+    # exists
+    function load(f, d, kind,    line, r, len, raw, over, fb, n, t, c, s, i, rest, tok, child, fence, fch, flen, cmt, fm, first, blank, pblank, phead, icode, inlist, code) {
+      if (f in seen) return seen[f]
+      seen[f] = 0
+      # the roots are regular files already; an import may name a directory or a FIFO
+      if (kind == "i") { print "C " f; if (system("test -f " q(f)) != 0) return 0 }
+      first = 1; pblank = 1
+      while ((r = (getline line < f)) > 0) {
+        len = length(line) + 1
+        # a file over 4 MiB is skipped whole: stop reading it there
+        if ((raw += len) > 4194304) { over = 1; break }
+        if (kind == "m") { if (++n > 200 || fb + len > 25000) break; fb += len; continue }
+        sub(/\r$/, "", line)
+        # rules: the frontmatter is not loaded, and a rule with paths: loads only on demand
+        if (first && kind == "r" && line ~ /^---[ \t]*$/) { fm = 1; first = 0; continue }
+        first = 0
+        if (fm) {
+          if (line ~ /^---[ \t]*$/) fm = 0
+          else if (line ~ /^paths[ \t]*:/) { close(f); return seen[f] = 1 }
+          continue
+        }
+        t = line; sub(/^ ? ? ?/, "", t)
+        # fenced code: counted, never imports, HTML comments kept
+        if (fence) {
+          fb += len
+          c = t; sub(/[ \t]+$/, "", c)
+          if (substr(c, 1, 1) == fch && length(c) >= flen && c ~ /^(`+|~+)$/) { fence = 0; phead = 1; pblank = 0 }
+          continue
+        }
+        if (match(t, /^(```+|~~~+)/)) { fence = 1; fch = substr(t, 1, 1); flen = RLENGTH; fb += len; continue }
+        # block-level HTML comments are stripped before loading; text after the end counts
+        if (cmt) {
+          if (!(i = index(line, "-->"))) continue
+          cmt = 0; line = substr(line, i + 3); len = length(line) + 1; t = line
+        } else if (substr(t, 1, 4) == "<!--") {
+          rest = substr(t, 5)
+          if (!(i = index(rest, "-->"))) { cmt = 1; continue }
+          line = substr(rest, i + 3); len = length(line) + 1; t = line
+        }
+        fb += len
+        # indented code: four spaces or a tab after a blank line or a heading, outside a list
+        blank = (line ~ /^[ \t]*$/)
+        code = !blank && line ~ /^(    |\t)/ && !inlist && (pblank || phead || icode)
+        icode = code || (icode && blank)
+        if (!blank && line !~ /^(    |\t)/) inlist = (t ~ /^([-*+]|[0-9]+[.)])([ \t]|$)/) || (inlist && !pblank)
+        pblank = blank; phead = (t ~ /^#/)
+        if (code || d >= 4) continue
+        # an import is "@" at the start or after a space, up to the next space; inline comments
+        # and code spans hide it
+        s = line
+        while (i = index(s, "<!--")) {
+          rest = substr(s, i + 4)
+          if (!(n = index(rest, "-->"))) { s = substr(s, 1, i - 1); break }
+          s = substr(s, 1, i - 1) " " substr(rest, n + 3)
+        }
+        s = nospan(s)
+        while (match(s, /(^|[ \t])@[^ \t]+/)) {
+          tok = substr(s, RSTART, RLENGTH); sub(/^[ \t]*@/, "", tok)
+          s = substr(s, RSTART + RLENGTH)
+          child = resolve(f, tok)
+          if (child != "") load(child, d + 1, "i")
+        }
+      }
+      close(f)
+      # an empty file exists too
+      if (r >= 0) seen[f] = 1
+      if (!over) total += fb
+      return seen[f]
+    }
+    { kind[NR] = substr($0, 1, 1); path[NR] = substr($0, 3) }
+    END {
+      for (i = 1; i <= NR; i++) {
+        # ~/.claude/CLAUDE.md is the user file, not a project one of the home dir, also when
+        # CLAUDE_CONFIG_DIR points elsewhere (assumed, not checked)
+        if (kind[i] == "a" || kind[i] == "m" || (kind[i] == "c" && path[i] == homeuser)) continue
+        # the user CLAUDE.md does not stop AGENTS.md from loading
+        if (load(path[i], 0, kind[i]) && kind[i] == "c" && path[i] != user) claude = 1
+      }
+      for (i = 1; i <= NR; i++) {
+        if (kind[i] == "a" && !claude && agents == "true") load(path[i], 0, "a")
+        if (kind[i] == "m") load(path[i], 0, "m")
+      }
+      print "T " total + 0
+    }' 2>/dev/null
+}
+mem_total=""
+mem_dir="${project_dir:-$cwd}"
+case "$mem_dir" in ''|/*) ;; *) mem_dir="$PWD/$mem_dir" ;; esac
+if [ -n "$mem_dir" ]; then
+  mem_key=${mem_dir//[!$alnum]/-}
+  # a file name is at most 255 bytes: a long key is cut and gets a hash of the whole dir
+  if [ ${#mem_key} -gt 200 ]; then ck=$(printf '%s' "$mem_dir" | cksum); mem_key="${mem_key:0:200}-${ck%% *}"; fi
+  mem_cache="$state_dir/mem-$mem_key"
+  mem_ok="" mem_old="" mem_v=""
+  set --
+  if [ -f "$mem_cache" ]; then
+    while IFS= read -r l; do
+      case "$l" in
+        "v2 "*) mem_v=${l#v2 } ;;
+        "P "*) [ "${l#P }" = "$mem_dir" ] && mem_ok=1 ;;
+        "C "*) set -- "$@" "${l#C }" ;;
+        "S "*) mem_old="${mem_old:+$mem_old$nl}${l#S }" ;;
+      esac
+    done < "$mem_cache"
+    if [ -n "$mem_ok" ] && [ -n "$mem_v" ]; then mem_stat "$@"; [ "$st" = "$mem_old" ] && mem_total=$mem_v; fi
+  fi
+  if [ -z "$mem_total" ]; then
+    set --
+    while IFS= read -r l; do
+      case "$l" in
+        "T "*) mem_total=${l#T } ;;
+        "C "*) set -- "$@" "${l#C }" ;;
+      esac
+    done <<EOF
+$(mem_count "$mem_dir")
+EOF
+    case "$mem_total" in
+      ''|*[!0-9]*) mem_total="" ;;
+      *)
+        mem_new="v2 $mem_total${nl}P $mem_dir"
+        for f in "$@"; do mem_new="$mem_new${nl}C $f"; done
+        mem_stat "$@"
+        while IFS= read -r l; do [ -n "$l" ] && mem_new="$mem_new${nl}S $l"; done <<EOF
+$st
+EOF
+        { mkdir -p "$state_dir" && printf '%s\n' "$mem_new" > "$mem_cache.$$" &&
+          mv -f "$mem_cache.$$" "$mem_cache"; } 2>/dev/null || rm -f "$mem_cache.$$" 2>/dev/null
+        ;;
+    esac
+  fi
+fi
 # skills: the payload has no per-category context breakdown, so estimate the skill listing from
 # name + description in project and user SKILL.md frontmatter (~3 chars per token, matches /context
 # within ~10%); skills with disable-model-invocation are not listed; plugin skills are not counted
@@ -349,8 +626,22 @@ for f in "${project_dir:-$cwd}"/.claude/skills/*/SKILL.md "$claude_dir"/skills/*
   # an unmatched glob stays literal, and BSD awk aborts on a missing file
   [ -f "$f" ] && set -- "$@" "$f"
 done
-skills_str=""
-[ $# -gt 0 ] && skills_str=$(LC_ALL=C awk -v s="${ctx_size:-0}" '
+# "  skll: ~3,100 tok ~0.3%": the byte total at ~3 per token, rounded to 100, and its share of the
+# context window when the payload has its size
+awk_est='
+  function est(label, total, s,    n, u) {
+    if (total <= 0) return
+    n = total / 3
+    u = sprintf("%d", int(n / 100 + 0.5) * 100)
+    # under 50 tokens rounds to ~0: nothing to show
+    if (u == "0") return
+    while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+    printf "  %s: ~%s tok", label, u
+    if (s > 0) printf " ~%.1f%%", n * 100 / s
+  }'
+est_str=""
+# /dev/null: awk would read stdin with no files left
+{ [ $# -gt 0 ] || [ -n "$mem_total" ]; } && est_str=$(LC_ALL=C awk -v s="${ctx_size:-0}" -v mem="${mem_total:-0}" "$awk_est"'
   function flush() { if (!skip) total += len; len = 0 }
   FNR == 1 { flush(); fm = 0; skip = 0; in_desc = 0 }
   # CRLF files: a trailing \r would hide the --- delimiters and skip the whole file
@@ -361,15 +652,7 @@ skills_str=""
   /^(name|description):/ { len += length($0); in_desc = ($0 ~ /^description:/); next }
   in_desc && /^[ \t]/ { len += length($0); next }
   { in_desc = 0 }
-  END {
-    flush()
-    if (total == 0) exit
-    n = total / 3
-    u = sprintf("%d", int(n / 100 + 0.5) * 100)
-    while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
-    printf "  skll: ~%s tok", u
-    if (s > 0) printf " ~%.1f%%", n * 100 / s
-  }' "$@" 2>/dev/null)
+  END { flush(); est("skll", total, s); est("mem", mem, s) }' "$@" /dev/null 2>/dev/null)
 case "$thinking_in" in
   true)  think_str=$(printf "${gray}thnk:\033[0m${cyan}on\033[0m") ;;
   false) think_str=$(printf "${gray}thnk:off\033[0m") ;;
@@ -431,19 +714,19 @@ count_prompts() {
       else empty end
     end) |
   (map(select(.k != "T") | .k) | join("")),
-  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end) \(["-", "-"] + map(select(.k == "P") | .at // "-" | tostring) | .[-2:] | join(" "))"
+  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
   end' 2>/dev/null
 }
 # a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
 rewind_flag=""
 [ -n "$session_ok" ] && rewind_flag="$state_dir/$session_id.rewind"
 marks="" turns="" leaf=""
+# tail -r is BSD, tac GNU (also for the cache age of the last line)
+rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
 if [ -f "$transcript" ]; then
   if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
   if [ "$scan" = R ]; then
     [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
-    # tail -r is BSD, tac GNU
-    rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
     m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
     u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
     if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
@@ -474,7 +757,7 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   }
   printf "\033[0m"
 }')
-printf "%s%s${gray}%s\033[0m%s\n" "$p6" "$think_str" "$skills_str" "$prompts_str"
+printf "%s%s${gray}%s\033[0m%s\n" "$p6" "$think_str" "$est_str" "$prompts_str"
 
 if [ -n "$used" ]; then
   # current_usage gives exact tokens; older payloads only have the percentage
@@ -540,6 +823,33 @@ if [ -n "$used" ]; then
   [ -n "$cost_str" ] && cost_str="$cost_str$cost_delta_str"
 
   now=$(date +%s)
+
+  # no rate_limits in the payload, but the account had them: a subscription, drawn from the cache
+  # with a gray percentage, as the values may be stale. A window whose reset has passed has an
+  # unknown usage: an empty bar, "--%" and no reset time (the next 5-hour window starts with the
+  # next message, and the weekly reset moment is not known to be fixed)
+  limits_col="" session_txt="" weekly_txt=""
+  if [ -z "$session_pct" ] && [ -z "$weekly_pct" ] && [ -f "$limits_cache" ]; then
+    c_sp="" c_sr="" c_wp="" c_wr="" c_ok=1
+    read -r c_sp c_sr c_wp c_wr < "$limits_cache" 2>/dev/null
+    # "-" or an integer short enough for test and $(( )), as the script wrote it
+    for v in "$c_sp" "$c_sr" "$c_wp" "$c_wr"; do
+      case "$v" in -) ;; ''|*[!0-9-]*|?*-*|?????????????*) c_ok="" ;; esac
+    done
+    if [ -n "$c_ok" ] && [ "$c_sp$c_wp" != "--" ]; then
+      limits_col=90
+      if [ "$c_sp" != - ]; then
+        session_pct=$c_sp session_reset=""
+        [ "$c_sr" = - ] || session_reset=$c_sr
+        [ -n "$session_reset" ] && [ "$session_reset" -le "$now" ] && session_pct=0 session_txt=-- session_reset=""
+      fi
+      if [ "$c_wp" != - ]; then
+        weekly_pct=$c_wp weekly_reset=""
+        [ "$c_wr" = - ] || weekly_reset=$c_wr
+        [ -n "$weekly_reset" ] && [ "$weekly_reset" -le "$now" ] && weekly_pct=0 weekly_txt=-- weekly_reset=""
+      fi
+    fi
+  fi
 
   # Enterprise: no sess/week limits, so the spend comes from the claude.ai API cache
   spend_used="" spend_limit="" spend_pct=""
@@ -609,7 +919,7 @@ EOF
 
   # line 4: sess
   if [ -n "$session_pct" ]; then
-    sess_bar=$(render_bar "sess" "$session_pct")
+    sess_bar=$(render_bar "sess" "$session_pct" "$limits_col" "$session_txt")
     if [ -n "$session_reset" ]; then
       printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$sess_bar" "$(fmt_reset_at "$session_reset")" "$(fmt_eta_hm $(( session_reset - now )))" "$cost_str"
     else
@@ -619,7 +929,7 @@ EOF
 
   # line 5: week
   if [ -n "$weekly_pct" ]; then
-    week_bar=$(render_bar "week" "$weekly_pct")
+    week_bar=$(render_bar "week" "$weekly_pct" "$limits_col" "$weekly_txt")
     if [ -n "$weekly_reset" ]; then
       printf "%s%s  $gray%s  %s\033[0m%s\n" "$p6" "$week_bar" "$(fmt_reset_at "$weekly_reset")" "$(fmt_eta_dhm $(( weekly_reset - now )))" "$week_time"
     else
@@ -644,11 +954,20 @@ EOF
 fi
 
 # last line: when the session started (its first transcript entry, also after /rewind), how long
-# it has been going, and "+" the gap between the last two prompts
-start=""
+# it has been going, and the prompt cache age: the time since the last API response, the last
+# assistant entry of the file (read from the end; after /rewind too, as the request still
+# refreshed the cache of the shared prefix). Synthetic entries (API errors, "No response
+# requested") and sidechain ones made no main request; up to 20 matches are tried.
+# "<epoch> <5|->": 5 when that response wrote the cache with the 5-minute TTL only
+start="" cache_at=""
 # (a file-history-snapshot comes first, its timestamp nested)
 [ -f "$transcript" ] && start=$(grep -m 1 -E '"type":"(user|assistant|system)"' "$transcript" 2>/dev/null |
   jq -r '.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor' 2>/dev/null)
+[ -n "$start" ] && cache_at=$($rev "$transcript" 2>/dev/null | grep -m 20 '"type":"assistant"' | jq -nrR '
+  first(inputs | fromjson? | select(type == "object" and .type == "assistant" and .isSidechain != true and .message.model != "<synthetic>")) |
+  (.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor) as $at |
+  (.message.usage.cache_creation | if type == "object" then . else {} end) as $w |
+  "\($at) \(if ($w.ephemeral_5m_input_tokens // 0) > 0 and ($w.ephemeral_1h_input_tokens // 0) == 0 then 5 else "-" end)"' 2>/dev/null)
 case "$start" in
   [0-9]*)
     now=$(date +%s)
@@ -656,13 +975,19 @@ case "$start" in
     fmt=+%H:%M
     [ $(( now - start )) -ge 86400 ] && fmt="+%a %H:%M"
     started=$(LC_ALL=C date -r "$start" "$fmt" 2>/dev/null || LC_ALL=C date -d "@$start" "$fmt" 2>/dev/null)
-    LC_ALL=C awk -v s="$start" -v at="$started" -v t="$turns" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    # both durations name days from a day. The cache age is green while every cache TTL is alive,
+    # yellow once only a 1-hour one can be (from 5 minutes), red from 1 hour; after a response that
+    # wrote the 5-minute TTL only, red from 5 minutes
+    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    function fmtd(x) { return x >= 86400 ? sprintf("%dd %dh %dm", x / 86400, (x % 86400) / 3600, (x % 3600) / 60) : fmt(x) }
     BEGIN {
       d = now > s ? now - s : 0
-      printf "%s%ssession started\033[0m \033[0;37m%s\033[0m  %sgoing\033[0m \033[0;37m%s\033[0m", p6, g, at, g,
-        (d >= 86400 ? sprintf("%dd %dh %dm", d / 86400, (d % 86400) / 3600, (d % 3600) / 60) : fmt(d))
-      n = split(t, f, " ")
-      if (n >= 5 && f[4] != "-" && f[5] != "-" && f[5] - f[4] >= 1) printf "  %s+%s\033[0m", g, fmt(f[5] - f[4])
+      printf "%s%ssession started\033[0m \033[0;37m%s\033[0m  %sgoing\033[0m \033[0;37m%s\033[0m", p6, g, at, g, fmtd(d)
+      if (split(c, f, " ") == 2 && f[1] ~ /^[0-9]+$/) {
+        a = now > f[1] + 0 ? now - f[1] : 0
+        col = (a >= 3600 || (f[2] == "5" && a >= 300) ? "31" : (a >= 300 ? "33" : "32"))
+        printf "  %scache\033[0m \033[0;%sm%s\033[0m", g, col, fmtd(a)
+      }
       printf "\n"
     }'
     ;;

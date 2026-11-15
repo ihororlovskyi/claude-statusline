@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs statusline.sh + subagent-statusline.sh into ~/.claude and wires statusLine + subagentStatusLine in settings.json;
+# Installs statusline.sh into ~/.claude and wires statusLine in settings.json (Claude Code 2.1.323+ has no subagentStatusLine);
 # turns off the footer PR badge in ~/.claude.json, as line 1 of the status line shows the PR.
 set -eu
 
@@ -7,7 +7,7 @@ REPO="ihororlovskyi/claude-statusline"
 BRANCH="${CLAUDE_STATUSLINE_BRANCH:-main}"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_DIR/settings.json"
-FILES="statusline.sh subagent-statusline.sh"
+FILES="statusline.sh"
 
 command -v jq > /dev/null 2>&1 || { echo "error: jq is required (brew install jq)" >&2; exit 1; }
 
@@ -35,9 +35,8 @@ dir_ref="'$(printf '%s' "$CLAUDE_DIR" | sed "s/'/'\\\\''/g")'"
 [ "$CLAUDE_DIR" = "$HOME/.claude" ] && dir_ref="~/.claude"
 # built before any file is written, so an invalid settings.json stops the install with nothing changed;
 # refreshInterval re-renders an idle status line, so the session times keep moving; a value already set is kept
-jq --arg main "bash $dir_ref/statusline.sh" --arg sub "bash $dir_ref/subagent-statusline.sh" \
-  '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}
-  | .subagentStatusLine = {type: "command", command: $sub}' \
+jq --arg main "bash $dir_ref/statusline.sh" \
+  '.statusLine = {type: "command", command: $main, refreshInterval: (.statusLine.refreshInterval // 60)}' \
   "$SETTINGS" > "$tmp/settings.json" ||
   { echo "error: $SETTINGS is not valid JSON, nothing was changed" >&2; exit 1; }
 

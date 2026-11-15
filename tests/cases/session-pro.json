@@ -1,0 +1,1 @@
+{"cwd":"/nonexistent/project","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":200000},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1700000000},"seven_day":{"used_percentage":20,"resets_at":1700000000}},"transcript_path":"fixtures/transcripts/session-pro.jsonl"}

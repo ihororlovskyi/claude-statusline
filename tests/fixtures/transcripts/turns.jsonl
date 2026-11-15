@@ -1,0 +1,6 @@
+{"type":"user","timestamp":"2026-10-18T10:00:00.000Z","message":{"role":"user","content":"first prompt"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"system","subtype":"turn_duration","durationMs":4200000,"timestamp":"2026-10-18T11:10:00.000Z"}
+{"type":"user","timestamp":"2026-10-18T12:00:00.000Z","message":{"role":"user","content":"second prompt"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"system","subtype":"turn_duration","durationMs":332000,"timestamp":"2026-10-18T12:05:32.000Z"}

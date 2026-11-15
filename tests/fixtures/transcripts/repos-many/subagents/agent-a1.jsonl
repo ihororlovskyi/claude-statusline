@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"agent task"},"promptId":"p1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"@tmp@/extra/e.txt"}}]}}

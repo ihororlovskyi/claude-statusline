@@ -1,22 +1,97 @@
 #!/bin/bash
 # Snapshot tests: render every payload in cases/ and compare it with expected/<name>.txt.
 # panel-* cases go to the agent panel script, the rest to the main status line.
-# cache-* cases get a config dir with a fresh usage-cache.json and no skills; @repo@ in a payload
-# is replaced with a scratch git repo on branch "feature" with an untracked file. cases/<name>.state,
-# if present, seeds statusline-state/<session_id> of the case before it runs.
+# cache-* cases get a config dir with a fresh usage-cache.json and no skills; every case runs at a
+# fixed now, 2026-10-20 12:00 UTC (a date stub answers "date +%s"); @repo@ in a payload
+# is replaced with a scratch git repo on branch "feature" with an untracked file, and @tmp@ in a
+# payload, transcript, script a transcript runs (*.py) or seed with the dir of the other scratch
+# repos (session-repos cases).
+# cases/<name>.state, cases/<name>.repos and cases/<name>.rewind, if present, seed
+# statusline-state/<session_id>, <session_id>.repos and <session_id>.rewind of the case before it
+# runs; @line1@ in a seed is the byte size of the first
+# line of the case transcript. gh is a stub that fails, so no case reaches the network.
+# statusline-state/rate-limits (account-wide) is removed before every case and seeded from
+# cases/<name>.limits; limits-* cases append its content after the render to their snapshot.
 # Usage: bash tests/run.sh [--update]   (--update rewrites the snapshots after an intended change)
 cd "$(dirname "$0")" || exit 1
 # fixed timezone for reset times; no global or system git config (status.showUntrackedFiles=no
 # would hide the dirty mark of the scratch repo)
 export TZ=UTC GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-# the cache must be fresh and the repo has an absolute path, so both are built per run
-tmp=$(mktemp -d) || exit 1
+# the cache must be fresh and the repo has an absolute path, so both are built per run;
+# physical, as git prints repo roots with symlinks resolved (/var -> /private/var on macOS)
+tmp=$(cd "$(mktemp -d)" && pwd -P) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 git init -q -b feature "$tmp/repo" && touch "$tmp/repo/untracked" || exit 1
+# repos the session-repos transcripts edit: <dir> <branch> <origin>
+while read -r d b url; do
+  git init -q -b "$b" "$tmp/$d" || exit 1
+  [ "$url" = "-" ] || git -C "$tmp/$d" remote add origin "$url" || exit 1
+done <<REPOS
+app feature git@github.com:acme/app.git
+sib dev git@github.com:acme/lib.git
+other dev https://github.com/sentimony/skills.git
+plain main -
+extra main git@github-work:acme/extra.git
+wip dev git@github.com:acme/wip.git
+detached main git@github.com:acme/detached.git
+REPOS
+touch "$tmp/sib/untracked"
+# a fixed date and author keep the short hash of the detached HEAD stable
+GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
+  git -C "$tmp/detached" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init &&
+  git -C "$tmp/detached" checkout -q --detach || exit 1
+ln -s "$tmp/sib" "$tmp/link-sib" && mkdir "$tmp/nogit" || exit 1
+# dir-* cases: a cwd in a subfolder of the scratch repo and in a worktree of another repo
+mkdir -p "$tmp/repo/sub/deep" && git -C "$tmp/detached" worktree add -q -b wt "$tmp/wt-tree" &&
+  mkdir "$tmp/wt-tree/sub" || exit 1
+mkdir "$tmp/bin" && printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh" && chmod +x "$tmp/bin/gh" || exit 1
+printf '#!/bin/sh\n[ "$*" = +%%s ] && [ -n "$FAKE_NOW" ] && exec echo "$FAKE_NOW"\nexec /bin/date "$@"\n' > "$tmp/bin/date" &&
+  chmod +x "$tmp/bin/date" || exit 1
+export PATH="$tmp/bin:$PATH"
+# transcripts may name @tmp@ paths, so they are read from a substituted copy
+cp -R fixtures/transcripts "$tmp/transcripts" || exit 1
+find "$tmp/transcripts" \( -name '*.jsonl' -o -name '*.py' \) -exec sed -i '' "s#@tmp@#$tmp#g" {} + || exit 1
 mkdir "$tmp/cache-config"
 # a copy: cases with a session_id write statusline-state/ into the config dir
 cp -R fixtures/config "$tmp/config" || exit 1
+# projects live in the scratch dir: the memory estimate walks up from the project dir, and inside
+# this checkout it would reach the repo's own CLAUDE.md
+cp -R fixtures/project "$tmp/project" && cp -R fixtures/memory "$tmp/memory" || exit 1
+# mem-* cases: their own config dir and home (for @~/ imports), and MEMORY.md of auto memory,
+# whose dir is named after the scratch path: <project> <lines> <bytes per line>
+cp -R fixtures/mem-config "$tmp/mem-config" && cp -R fixtures/mem-home "$tmp/home" || exit 1
+# the same letters and digits as the script: Claude Code keeps only [a-zA-Z0-9] in the dir name,
+# so "café" ends in "caf-" (mem-* cases run in a UTF-8 locale, where a range would keep "é")
+alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+accent=$(jq -rn '"caf\u00e9"') && cp -R fixtures/memory/accent "$tmp/memory/$accent" || exit 1
+long=$(printf '%0250d' 0 | tr 0 x) && cp -R fixtures/memory/cache-long "$tmp/memory/$long" || exit 1
+# a project whose CLAUDE.md is a directory and CLAUDE.local.md a FIFO (awk would wait on it
+# forever), and an import over the 4 MiB limit
+mkdir "$tmp/memory/special/CLAUDE.md" && mkfifo "$tmp/memory/special/CLAUDE.local.md" || exit 1
+awk 'BEGIN { s = sprintf("%79s", ""); gsub(/ /, "x", s); for (i = 0; i < 56000; i++) print s }' \
+  > "$tmp/memory/huge/big.md" || exit 1
+while read -r p n w; do
+  m="$tmp/mem-config/projects/${p//[!$alnum]/-}/memory"
+  mkdir -p "$m" && awk -v n="$n" -v w="$w" 'BEGIN {
+    for (i = 1; i <= n; i++) { s = sprintf("- note %03d", i); while (length(s) < w - 1) s = s " text"; print substr(s, 1, w - 1) }
+  }' > "$m/MEMORY.md" || exit 1
+done <<AUTO
+$tmp/memory/auto-lines 250 40
+$tmp/memory/auto-bytes 150 300
+$tmp/memory/auto-off 75 40
+$tmp/detached 30 30
+$tmp/memory/caf- 40 30
+AUTO
+# PRs of the scratch repos, fresh so no case refreshes them
+now=$(date +%s)
+mkdir -p "$tmp/config/statusline-state" && cat > "$tmp/config/statusline-state/pr-cache" <<PRS || exit 1
+acme/app feature $now 7 pending
+acme/lib dev $now 5 approved
+sentimony/skills dev $now 109 merged
+acme/extra main $now 3 closed
+acme/wip dev $now 12 draft
+PRS
 printf '{"timestamp":%s000,"data":{"spend":{"used":{"amount_minor":12345,"exponent":2},"limit":{"amount_minor":50000,"exponent":2},"percent":25}}}\n' \
   "$(date +%s)" > "$tmp/cache-config/usage-cache.json"
 
@@ -27,20 +102,50 @@ for f in cases/*.json; do
   name=$(basename "$f" .json)
   script=statusline.sh
   # skills come from fixtures, not the real ~/.claude
-  config="$tmp/config"
+  config="$tmp/config" home=$HOME lc=${LC_ALL:-}
   case "$name" in
     panel-*) script=subagent-statusline.sh ;;
     cache-*) config="$tmp/cache-config" ;;
+    mem-*) config="$tmp/mem-config" home="$tmp/home" lc=en_US.UTF-8 ;;
   esac
-  if [ -f "cases/$name.state" ]; then
-    mkdir -p "$config/statusline-state" &&
-      cp "cases/$name.state" "$config/statusline-state/$(jq -r .session_id "$f")" || exit 1
-  fi
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
-  payload=$(jq -c --arg repo "$tmp/repo" 'walk(if . == "@repo@" then $repo else . end)' "$f") || exit 1
+  payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
+    'walk(if . == "@repo@" then $repo elif type == "string" then gsub("@tmp@"; $tmp) else . end)' "$f") || exit 1
+  for ext in state repos rewind; do
+    [ -f "cases/$name.$ext" ] || continue
+    sid=$(printf '%s' "$payload" | jq -r .session_id)
+    line1=$(head -n 1 "$(printf '%s' "$payload" | jq -r .transcript_path)" 2>/dev/null | wc -c | tr -d ' ')
+    target="$config/statusline-state/$sid"
+    [ "$ext" = state ] || target="$target.$ext"
+    mkdir -p "$config/statusline-state" &&
+      sed -e "s#@tmp@#$tmp#g" -e "s#@line1@#$line1#g" "cases/$name.$ext" > "$target" || exit 1
+  done
+  # cases/<name>.mem seeds the memory estimate cache of the case project; with cases/<name>.warm
+  # the case renders once first and its cached total becomes 300000 bytes, so the snapshot shows
+  # whether the cache was read
+  pd=$(printf '%s' "$payload" | jq -r '.workspace.project_dir // .cwd // ""')
+  key=${pd//[!$alnum]/-}
+  if [ ${#key} -gt 200 ]; then ck=$(printf '%s' "$pd" | cksum); key="${key:0:200}-${ck%% *}"; fi
+  mem_cache="$config/statusline-state/mem-$key"
+  if [ -f "cases/$name.mem" ]; then
+    mkdir -p "$config/statusline-state" && sed "s#@tmp@#$tmp#g" "cases/$name.mem" > "$mem_cache" || exit 1
+  fi
+  if [ -f "cases/$name.warm" ]; then
+    printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" LC_ALL="$lc" bash "../scripts/$script" > /dev/null &&
+      sed -i '' 's/^v2 .*/v2 300000/' "$mem_cache" || exit 1
+  fi
+  # the rate limits cache is shared by all sessions: no case may see the one an earlier case wrote
+  limits="$config/statusline-state/rate-limits"
+  rm -f "$limits"
+  if [ -f "cases/$name.limits" ]; then
+    mkdir -p "$config/statusline-state" && cp "cases/$name.limits" "$limits" || exit 1
+  fi
   # the rest: bar measures today's date against the billing month
-  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" bash "../scripts/$script" |
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$config" HOME="$home" LC_ALL="$lc" FAKE_NOW=1792497600 bash "../scripts/$script" |
     sed -E 's/(rest:).*/\1 <date-dependent>/')
+  case "$name" in
+    limits-*) actual=$(printf '%s\nrate-limits: %s' "$actual" "$(cat "$limits" 2>/dev/null || echo none)") ;;
+  esac
   expected="expected/$name.txt"
   if [ -n "$update" ]; then
     printf '%s\n' "$actual" > "$expected"

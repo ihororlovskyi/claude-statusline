@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"bash"},"promptId":"p1"}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git -C @tmp@/sib commit -qm x"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"cd wip && sed -i '' s/a/b/ w.md"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"git -C @tmp@/plain status --short 2>/dev/null"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"cd @tmp@/extra && ls | head"}}]}}
+{"type":"assistant","cwd":"@tmp@","message":{"content":[{"type":"tool_use","id":"t5","name":"Bash","input":{"command":"for d in a b; do git -C \"$d\" add .; done"}}]}}

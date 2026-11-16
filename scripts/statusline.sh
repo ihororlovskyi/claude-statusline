@@ -429,9 +429,11 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   if (seg != "") {
     k = split(m, part, "C")
     printf "  "
-    for (i = 1; i < k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
-    # the count since the last compaction is white, like the total; ·0 right after one stays gray
-    printf "·%s%d", (length(part[k]) > 0 ? "\033[0;37m" : ""), length(part[k])
+    # newest first: the count since the last compaction is white, like the total, 0 right after
+    # one stays gray; then the counts before each compaction, back to the first
+    printf "%s%d", (length(part[k]) > 0 ? "\033[0;37m" : ""), length(part[k])
+    printf "\033[0m%s", g
+    for (i = k - 1; i >= 1; i--) printf "·%d", length(part[i])
   }
   printf "\033[0m"
 }')
@@ -736,7 +738,7 @@ for f in "${project_dir:-$cwd}"/.claude/skills/*/SKILL.md "$claude_dir"/skills/*
   # an unmatched glob stays literal, and BSD awk aborts on a missing file
   [ -f "$f" ] && set -- "$@" "$f"
 done
-# "  skll: ~3,100 tok ~0.3%": the byte total at ~3 per token, rounded to 100, and its share of the
+# "  skills: ~3,100 tok ~0.3%": the byte total at ~3 per token, rounded to 100, and its share of the
 # context window when the payload has its size
 awk_est='
   function est(label, total, s,    n, u) {
@@ -762,9 +764,9 @@ est_str=""
   /^(name|description):/ { len += length($0); in_desc = ($0 ~ /^description:/); next }
   in_desc && /^[ \t]/ { len += length($0); next }
   { in_desc = 0 }
-  END { flush(); est("skll", total, s); est("mem", mem, s) }' "$@" /dev/null 2>/dev/null)
+  END { flush(); est("skills", total, s); est("memory", mem, s) }' "$@" /dev/null 2>/dev/null)
 
-# skll:/mem: estimates; nothing to show draws no line
+# skills:/memory: estimates; nothing to show draws no line
 [ -n "$est_str" ] && printf "%s${gray}%s\033[0m\n" "$p6" "${est_str#  }"
 
 if [ -n "$used" ]; then

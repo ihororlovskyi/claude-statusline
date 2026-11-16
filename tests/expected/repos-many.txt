@@ -5,6 +5,6 @@
 [0;90m↳[0m  [0;36mplain[0m [1;34mgit:([0;31mmain[1;34m)[0m
 [0;90m↳[0m  [0;36mdetached[0m [1;34mgit:([0;31me6be664[1;34m)[0m
 [0;90m↳[0m  [0;36mextra[0m [1;34mgit:([0;31mmain[1;34m)[0m [0;90m· PR[0m [0;90m#3 closed[0m
-      [0;90mskll: ~200 tok ~0.1%[0m
+      [0;90mskills: ~200 tok ~0.1%[0m
       [0;90mcntx:[0m[0;32m░░░░░░░░░░[0m [0;37m5%[0m  [0;32m10,000[0m [0;90mtok /200k[0m
       [0;90mrest: <date-dependent>

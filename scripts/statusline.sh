@@ -88,15 +88,17 @@ awk_fmt='
     return sprintf("%ds", x)
   }'
 
-# line 1: model + effort level; models without effort show nothing after the name
+# line 1: model + effort level, a gray dot and the thinking mode; models without effort show
+# nothing after the name
 model_str=""
-[ -n "$model" ] && model_str=$(printf "  $mag%s\033[0m" "$model")
-[ -n "$effort_val" ] && model_str=$(printf "%s $mag%s\033[0m" "$model_str" "$effort_val")
+[ -n "$model" ] && model_str=$(printf "$mag%s\033[0m" "$model")
+[ -n "$effort_val" ] && model_str=$(printf "%s${model_str:+ }$mag%s\033[0m" "$model_str" "$effort_val")
 # session cost: on the sess line, else on the used line, else on the cntx line, else (no context
-# data) on line 1
+# data) at the end of line 1
+cost_line1=""
 cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" -v col="$cyan" 'BEGIN { if (c + 0 > 0) printf "  %s$%.2f\033[0m", col, c }')
 if [ -z "$used" ] && [ -n "$cost_usd" ]; then
-  model_str="$model_str$cost_str"
+  cost_line1=$cost_str
 fi
 nl='
 '
@@ -335,9 +337,119 @@ EOF
   fi
 fi
 
-# the PR follows the branch it belongs to; a gray dot then separates it from the model
-[ -n "$pr_str" ] && [ -n "$model_str" ] && model_str=$(printf " ${gray}·\033[0m %s" "${model_str#  }")
-printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$pr_str" "$model_str"
+# prompts in the session: P per prompt, C per compaction, in transcript order. Tool results,
+# meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
+# summaries and /compact itself are user entries too, but not prompts. The same pass sums the
+# turn_duration entries Claude Code writes when a turn ends: "<sum ms> <last ms> <start|->",
+# where start is the epoch of a prompt whose turn is still running.
+# /rewind keeps the dropped entries in the file and appends an explicit last-prompt entry whose
+# leafUuid is the entry to go on from (zeros: the start). After one, only the active branch counts:
+# the entries from the leaf back along parentUuid, across a compaction along logicalParentUuid.
+# The first pass also takes the explicit last-prompt entries and prints only "R" when it meets
+# one, so a session without /rewind costs as before. Then the leaf is that leafUuid while no entry
+# follows it, else the last entry with a uuid (tail -r reads from the end; a grep over the whole
+# file took 2.4 s for 124 MB), and awk adds "I <uuid> <parent>" for the other entries: a full jq
+# parse of them took 4.7 s for 124 MB (the count without /rewind 0.8 s), as did awk over every
+# line. Every entry starts with "parentUuid" (the lines without it, such as api-request-blob, are
+# skipped) and its first "uuid" and "logicalParentUuid" are its own (checked on 74,530 entries in
+# October 2026)
+rewind_re='^\{"type":"last-prompt".*"explicit":true'
+other_ids() {
+  grep '^{"parentUuid":' "$transcript" 2>/dev/null | grep -vE '"type":"(user|system)"' | LC_ALL=C awk '
+    function id(key) { i = index($0, "\"" key "\":\""); return i ? substr($0, i + length(key) + 4, 36) : "" }
+    {
+      u = id("uuid")
+      if (u == "") next
+      p = substr($0, 1, 15) == "{\"parentUuid\":\"" ? substr($0, 16, 36) : id("logicalParentUuid")
+      print "I", u, (p == "" ? "-" : p)
+    }'
+}
+# $1: "" (find out), "-" (no chain) or the leaf
+count_prompts() {
+  { [ -n "$1" ] && [ "$1" != "-" ] && other_ids
+    grep -E "\"type\":\"(user|system)\"|$rewind_re" "$transcript" 2>/dev/null; } | jq -nrR --arg leaf "$1" '
+  [inputs |
+    if startswith("I ") then split(" ") | {u: .[1], p: .[2]}
+    else fromjson? | select(type == "object") | {u: (.uuid | if type == "string" then . else null end), p: (.parentUuid // .logicalParentUuid), e: .}
+    end] |
+  if $leaf == "" and any(.[]; .e.type == "last-prompt" and .e.explicit == true) then "R" else
+  if $leaf == "" or $leaf == "-" then map(.e) else
+    (reduce (.[] | select(.u != null)) as $x ({}; .[$x.u] = $x.p)) as $up |
+    ([$leaf | recurse($up[.] | strings)] | map({key: ., value: true}) | from_entries) as $keep |
+    map(select(.e != null and $keep[.u // ""]) | .e)
+  end |
+  map(
+    if .type == "system" then
+      if .subtype == "compact_boundary" then {k: "C"}
+      elif .subtype == "turn_duration" then
+        {k: "T", ms: (.durationMs | if type == "number" and . >= 0 then floor else 0 end)}
+      else empty end
+    elif .type != "user" or .isMeta == true or .isCompactSummary == true or .isSidechain == true then empty
+    else (.timestamp | if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end) as $at |
+      .message.content |
+      if type == "string" then select(startswith("<") or startswith("/compact") | not) | {k: "P", at: $at}
+      elif type == "array" then select(map(.type?) | index("tool_result") | not) | {k: "P", at: $at}
+      else empty end
+    end) |
+  (map(select(.k != "T") | .k) | join("")),
+  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
+  end' 2>/dev/null
+}
+# a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
+rewind_flag=""
+[ -n "$session_ok" ] && rewind_flag="$state_dir/$session_id.rewind"
+marks="" turns="" leaf=""
+# tail -r is BSD, tac GNU (also for the cache age of the last line)
+rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
+if [ -f "$transcript" ]; then
+  if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
+  if [ "$scan" = R ]; then
+    [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
+    m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
+    u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
+    if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
+      leaf=$(printf '%s\n' "$u" | LC_ALL=C awk '{ i = index($0, "\"uuid\":\""); print substr($0, i + 8, 36) }')
+    else
+      leaf=$(printf '%s\n' "$m" | sed -n 's/.*"leafUuid":"\([0-9a-f-]*\)".*/\1/p')
+    fi
+    scan=$(count_prompts "${leaf:--}") || scan=""
+  fi
+  [ -n "$scan" ] && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
+fi
+# "13 prompts 1·4·8": the total, then the prompts since the last compaction and before each one;
+# no prompts show nothing, but "0 prompts" once /rewind dropped them all
+prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
+  p = gsub(/P/, "P", m)
+  if (p == 0 && r == "") exit
+  u = sprintf("%d", p)
+  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+  printf "  \033[0;37m%s\033[0m %s%s", u, g, (p == 1 ? "prompt" : "prompts")
+  seg = m
+  gsub(/P/, "", seg)
+  if (seg != "") {
+    k = split(m, part, "C")
+    printf "  "
+    # newest first: the count since the last compaction is white, like the total, 0 right after
+    # one stays gray; then the counts before each compaction, back to the first
+    printf "%s%d", (length(part[k]) > 0 ? "\033[0;37m" : ""), length(part[k])
+    printf "\033[0m%s", g
+    for (i = k - 1; i >= 1; i--) printf "·%d", length(part[i])
+  }
+  printf "\033[0m"
+}')
+# line 1: "<model> <effort> · thinking:on · 13 prompts  1·4·8", thinking:no when the payload has no
+# thinking field. The model is left out when unknown, the dot goes with it; the prompt part
+# is left out with its dot when there are no prompts
+case "$thinking_in" in
+  true)  think_str=$(printf "${gray}thinking:\033[0m${cyan}on\033[0m") ;;
+  false) think_str=$(printf "${gray}thinking:off\033[0m") ;;
+  *)     think_str=$(printf "${gray}thinking:no\033[0m") ;;
+esac
+[ -n "$model_str" ] && think_str=$(printf "%s ${gray}·\033[0m %s" "$model_str" "$think_str")
+[ -n "$prompts_str" ] && think_str=$(printf "%s ${gray}·\033[0m %s" "$think_str" "${prompts_str#  }")
+printf "%s%s\n" "$think_str" "$cost_line1"
+# line 2: the project, branch and PR
+printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s\n" "$dir" "$git_info" "$pr_str"
 
 # one line per other repo the session edited
 while IFS= read -r root; do
@@ -359,14 +471,14 @@ done <<EOF
 $roots
 EOF
 
-# line 2: thinking + skills and memory estimates + prompts
+# the skills and memory estimates line
 # memory: the files Claude Code loads into every turn (the "Memory files" of /context), estimated
 # like the skills. Walking from the project dir up to /: CLAUDE.md, .claude/CLAUDE.md and
 # CLAUDE.local.md (AGENTS.md and .claude/AGENTS.md instead when none of them exists and the
 # built-in agents-md plugin is on); the user and managed CLAUDE.md; project and user .claude/rules
 # without paths: frontmatter; @path imports of all of them, up to four hops; MEMORY.md of auto
 # memory (the first 200 lines, at most 25,000 bytes). Checked against /context of 2.1.316 in
-# November 2026. Parsing every file each render would cost more than the rest of line 2, so the
+# November 2026. Parsing every file each render would cost more than the rest of that line, so the
 # total is kept in statusline-state/mem-<project dir> with "<mtime> <size> <path>" of every file
 # it looked at (missing ones too, so a new file shows up) and is recounted when one stat changes
 # sets st; BSD stat first: GNU stat takes -f for file system info, which starts with no mtime;
@@ -626,7 +738,7 @@ for f in "${project_dir:-$cwd}"/.claude/skills/*/SKILL.md "$claude_dir"/skills/*
   # an unmatched glob stays literal, and BSD awk aborts on a missing file
   [ -f "$f" ] && set -- "$@" "$f"
 done
-# "  skll: ~3,100 tok ~0.3%": the byte total at ~3 per token, rounded to 100, and its share of the
+# "  skills: ~3,100 tok ~0.3%": the byte total at ~3 per token, rounded to 100, and its share of the
 # context window when the payload has its size
 awk_est='
   function est(label, total, s,    n, u) {
@@ -652,112 +764,10 @@ est_str=""
   /^(name|description):/ { len += length($0); in_desc = ($0 ~ /^description:/); next }
   in_desc && /^[ \t]/ { len += length($0); next }
   { in_desc = 0 }
-  END { flush(); est("skll", total, s); est("mem", mem, s) }' "$@" /dev/null 2>/dev/null)
-case "$thinking_in" in
-  true)  think_str=$(printf "${gray}thnk:\033[0m${cyan}on\033[0m") ;;
-  false) think_str=$(printf "${gray}thnk:off\033[0m") ;;
-  *)     think_str=$(printf "${gray}thnk:no\033[0m") ;;
-esac
+  END { flush(); est("skills", total, s); est("memory", mem, s) }' "$@" /dev/null 2>/dev/null)
 
-# prompts in the session: P per prompt, C per compaction, in transcript order. Tool results,
-# meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
-# summaries and /compact itself are user entries too, but not prompts. The same pass sums the
-# turn_duration entries Claude Code writes when a turn ends: "<sum ms> <last ms> <start|->",
-# where start is the epoch of a prompt whose turn is still running.
-# /rewind keeps the dropped entries in the file and appends an explicit last-prompt entry whose
-# leafUuid is the entry to go on from (zeros: the start). After one, only the active branch counts:
-# the entries from the leaf back along parentUuid, across a compaction along logicalParentUuid.
-# The first pass also takes the explicit last-prompt entries and prints only "R" when it meets
-# one, so a session without /rewind costs as before. Then the leaf is that leafUuid while no entry
-# follows it, else the last entry with a uuid (tail -r reads from the end; a grep over the whole
-# file took 2.4 s for 124 MB), and awk adds "I <uuid> <parent>" for the other entries: a full jq
-# parse of them took 4.7 s for 124 MB (the count without /rewind 0.8 s), as did awk over every
-# line. Every entry starts with "parentUuid" (the lines without it, such as api-request-blob, are
-# skipped) and its first "uuid" and "logicalParentUuid" are its own (checked on 74,530 entries in
-# October 2026)
-rewind_re='^\{"type":"last-prompt".*"explicit":true'
-other_ids() {
-  grep '^{"parentUuid":' "$transcript" 2>/dev/null | grep -vE '"type":"(user|system)"' | LC_ALL=C awk '
-    function id(key) { i = index($0, "\"" key "\":\""); return i ? substr($0, i + length(key) + 4, 36) : "" }
-    {
-      u = id("uuid")
-      if (u == "") next
-      p = substr($0, 1, 15) == "{\"parentUuid\":\"" ? substr($0, 16, 36) : id("logicalParentUuid")
-      print "I", u, (p == "" ? "-" : p)
-    }'
-}
-# $1: "" (find out), "-" (no chain) or the leaf
-count_prompts() {
-  { [ -n "$1" ] && [ "$1" != "-" ] && other_ids
-    grep -E "\"type\":\"(user|system)\"|$rewind_re" "$transcript" 2>/dev/null; } | jq -nrR --arg leaf "$1" '
-  [inputs |
-    if startswith("I ") then split(" ") | {u: .[1], p: .[2]}
-    else fromjson? | select(type == "object") | {u: (.uuid | if type == "string" then . else null end), p: (.parentUuid // .logicalParentUuid), e: .}
-    end] |
-  if $leaf == "" and any(.[]; .e.type == "last-prompt" and .e.explicit == true) then "R" else
-  if $leaf == "" or $leaf == "-" then map(.e) else
-    (reduce (.[] | select(.u != null)) as $x ({}; .[$x.u] = $x.p)) as $up |
-    ([$leaf | recurse($up[.] | strings)] | map({key: ., value: true}) | from_entries) as $keep |
-    map(select(.e != null and $keep[.u // ""]) | .e)
-  end |
-  map(
-    if .type == "system" then
-      if .subtype == "compact_boundary" then {k: "C"}
-      elif .subtype == "turn_duration" then
-        {k: "T", ms: (.durationMs | if type == "number" and . >= 0 then floor else 0 end)}
-      else empty end
-    elif .type != "user" or .isMeta == true or .isCompactSummary == true or .isSidechain == true then empty
-    else (.timestamp | if type == "string" then sub("\\.[0-9]+"; "") | fromdateiso8601? else null end) as $at |
-      .message.content |
-      if type == "string" then select(startswith("<") or startswith("/compact") | not) | {k: "P", at: $at}
-      elif type == "array" then select(map(.type?) | index("tool_result") | not) | {k: "P", at: $at}
-      else empty end
-    end) |
-  (map(select(.k != "T") | .k) | join("")),
-  "\(map(select(.k == "T") | .ms) | add // 0) \((map(select(.k == "T")) | last | .ms) // 0) \(if (last | .k) == "P" then (last | .at // "-" | tostring) else "-" end)"
-  end' 2>/dev/null
-}
-# a session met with /rewind keeps its explicit entry, so "<session_id>.rewind" skips the first pass
-rewind_flag=""
-[ -n "$session_ok" ] && rewind_flag="$state_dir/$session_id.rewind"
-marks="" turns="" leaf=""
-# tail -r is BSD, tac GNU (also for the cache age of the last line)
-rev="tail -r"; tail -r /dev/null > /dev/null 2>&1 || rev=tac
-if [ -f "$transcript" ]; then
-  if [ -n "$rewind_flag" ] && [ -f "$rewind_flag" ]; then scan=R; else scan=$(count_prompts "") || scan=""; fi
-  if [ "$scan" = R ]; then
-    [ -n "$rewind_flag" ] && { mkdir -p "$state_dir" && : > "$rewind_flag"; } 2>/dev/null
-    m=$($rev "$transcript" 2>/dev/null | grep -m 1 -nE "$rewind_re")
-    u=$($rev "$transcript" 2>/dev/null | grep -m 1 -n '"uuid":"')
-    if [ -n "$u" ] && [ "${u%%:*}" -lt "${m%%:*}" ] 2>/dev/null; then
-      leaf=$(printf '%s\n' "$u" | LC_ALL=C awk '{ i = index($0, "\"uuid\":\""); print substr($0, i + 8, 36) }')
-    else
-      leaf=$(printf '%s\n' "$m" | sed -n 's/.*"leafUuid":"\([0-9a-f-]*\)".*/\1/p')
-    fi
-    scan=$(count_prompts "${leaf:--}") || scan=""
-  fi
-  [ -n "$scan" ] && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
-fi
-# "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one;
-# no prompts show nothing, but "0 prompts" once /rewind dropped them all
-prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
-  p = gsub(/P/, "P", m)
-  if (p == 0 && r == "") exit
-  u = sprintf("%d", p)
-  while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
-  printf "  \033[0;37m%s\033[0m %s%s", u, g, (p == 1 ? "prompt" : "prompts")
-  seg = m
-  gsub(/P/, "", seg)
-  if (seg != "") {
-    k = split(m, part, "C")
-    printf "  "
-    for (i = 1; i < k; i++) printf "%s%d", (i > 1 ? "·" : ""), length(part[i])
-    # the count since the last compaction is white, like the total; ·0 right after one stays gray
-    printf "·%s%d", (length(part[k]) > 0 ? "\033[0;37m" : ""), length(part[k])
-  }
-  printf "\033[0m"
-}')
-printf "%s%s${gray}%s\033[0m%s\n" "$p6" "$think_str" "$est_str" "$prompts_str"
+# skills:/memory: estimates; nothing to show draws no line
+[ -n "$est_str" ] && printf "%s${gray}%s\033[0m\n" "$p6" "${est_str#  }"
 
 if [ -n "$used" ]; then
   # current_usage gives exact tokens; older payloads only have the percentage
@@ -968,6 +978,127 @@ start="" cache_at=""
   (.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor) as $at |
   (.message.usage.cache_creation | if type == "object" then . else {} end) as $w |
   "\($at) \(if ($w.ephemeral_5m_input_tokens // 0) > 0 and ($w.ephemeral_1h_input_tokens // 0) == 0 then 5 else "-" end)"' 2>/dev/null)
+# total tokens of the whole session, counted as the Auto Reviewer's "Used:" footer counts a run:
+# input + output + cache creation + cache read of every response, summed over the main transcript
+# and the subagent ones next to it. The payload has no such field (its context_window totals are
+# input/output only, no cache tokens), so the transcripts are read incrementally. A response
+# written as several records (one per content block, same message id, same usage) counts once:
+# only the last id is kept in the state, as the records of one response are adjacent.
+# State "tok-<cksum of the transcript path>": "v1", then per file "P <path>" and
+# "<fingerprint> <offset> <sum before last id> <last id> <last id tokens>". A file smaller than
+# its offset or with another first 256 bytes is read again; the part after the last complete line
+# is left for the next render; at most 8 MB per file and render, with no total until caught up.
+tok_total=""
+tok_scan() {
+  # $1: file, state lines in $tok_old; sets tok_sum, appends the state to $tok_new, tok_ok=0 if behind
+  tok_sum=0
+  tf=$1
+  tf_size=$(wc -c < "$tf" 2>/dev/null | tr -d ' ')
+  case "$tf_size" in ''|*[!0-9]*) tok_ok=0; return ;; esac
+  tf_fp=$(head -c 256 "$tf" 2>/dev/null | cksum)
+  tf_fp=${tf_fp%% *}
+  o_fp="" o_off=0 o_base=0 o_lid="-" o_lt=0 cur="" hit=""
+  while IFS= read -r l; do
+    case "$l" in
+      "P "*) cur=${l#P } ;;
+      ""|"D "*) ;;
+      *)
+        if [ "$cur" = "$tf" ]; then
+          set -- $l
+          o_fp=$1 o_off=$2 o_base=$3 o_lid=$4 o_lt=$5
+          hit=1
+          break
+        fi ;;
+    esac
+  done <<EOT
+$tok_old
+EOT
+  case "$o_off$o_base$o_lt" in ''|*[!0-9]*) hit="" ;; esac
+  if [ -z "$hit" ] || [ "$o_fp" != "$tf_fp" ] || [ "$o_off" -gt "$tf_size" ]; then
+    o_off=0 o_base=0 o_lid="-" o_lt=0
+  fi
+  if [ "$o_off" -lt "$tf_size" ]; then
+    chunk="$state_dir/tok.$$.chunk"
+    mkdir -p "$state_dir" 2>/dev/null
+    # a killed render must not leave the chunk behind (the signal trap also stops the render)
+    trap 'rm -f "$chunk"' EXIT
+    trap 'rm -f "$chunk"; exit 1' HUP INT TERM
+    tail -c +$(( o_off + 1 )) "$tf" 2>/dev/null | head -c 8388608 > "$chunk" 2>/dev/null
+    cs=$(wc -c < "$chunk" 2>/dev/null | tr -d ' ')
+    # a full chunk means more is waiting: no total until the next renders catch up
+    [ "${cs:-0}" -ge 8388608 ] && tok_ok=0
+    # cut the chunk after its last complete line
+    if [ "${cs:-0}" -gt 0 ] && [ -n "$(tail -c 1 "$chunk" | tr -d '\n')" ]; then
+      cs=$(( cs - $(tail -n 1 "$chunk" | wc -c) ))
+    fi
+    if [ "${cs:-0}" -gt 0 ]; then
+      r=$(head -c "$cs" "$chunk" | grep -a '"type":"assistant"' | jq -nrR --argjson b "$o_base" --arg i "$o_lid" --argjson t "$o_lt" '
+        def n: if type == "number" and . >= 0 then . else 0 end;
+        reduce (inputs | fromjson? | select(type == "object" and .type == "assistant" and (.message | type == "object") and .message.model != "<synthetic>" and (.message.usage | type == "object")) |
+          {id: ((.message.id // .requestId // .uuid) | if type == "string" and test("^[A-Za-z0-9_-]+$") then . else "" end),
+           t: (.message.usage | (.input_tokens | n) + (.output_tokens | n) + (.cache_creation_input_tokens | n) + (.cache_read_input_tokens | n))}) as $x
+          ({b: $b, i: $i, t: $t};
+           if $x.id != "" and $x.id == .i then .t = ([.t, $x.t] | max)
+           else .b += .t | .i = (if $x.id == "" then "-" else $x.id end) | .t = $x.t end) |
+        "\(.b) \(.i) \(.t)"' 2>/dev/null)
+      rm -f "$chunk" 2>/dev/null
+      trap - EXIT HUP INT TERM
+      case "$r" in
+        [0-9]*" "*" "[0-9]*)
+          set -- $r
+          o_base=$1 o_lid=$2 o_lt=$3
+          o_off=$(( o_off + cs )) ;;
+        *) tok_ok=0; return ;;
+      esac
+    else
+      rm -f "$chunk" 2>/dev/null
+      trap - EXIT HUP INT TERM
+    fi
+  fi
+  tok_new="$tok_new${nl}P $tf${nl}$tf_fp $o_off $o_base $o_lid $o_lt"
+  tok_sum=$(( o_base + o_lt ))
+}
+if [ -n "$start" ] && [ -f "$transcript" ]; then
+  tok_key=$(printf '%s' "$transcript" | cksum)
+  tok_state="$state_dir/tok-${tok_key%% *}"
+  tok_old="" tok_new="v1" tok_ok=1 tok_all=0
+  if [ -f "$tok_state" ]; then
+    tok_old=$(cat "$tok_state" 2>/dev/null)
+    case "$tok_old" in "v1"*) tok_old=${tok_old#v1} ;; *) tok_old="" ;; esac
+  fi
+  for tf in "$transcript" "${transcript%.jsonl}"/subagents/agent-*.jsonl; do
+    [ -f "$tf" ] || continue
+    tok_scan "$tf"
+    tok_all=$(( tok_all + tok_sum ))
+  done
+  # a total of zero (no response yet, or only synthetic ones) shows nothing
+  [ "$tok_ok" = 1 ] && [ "$tok_all" -gt 0 ] && tok_total=$tok_all
+  # growth since the current prompt started, as "+N tok" after the total on the last line: the promptId of the last
+  # user entry marks the prompt, the state line "D <promptId> <base> <last>" holds the total when
+  # it started (a new promptId takes the previous last as base); no state yet, or a base above the
+  # total (a replaced transcript), shows nothing
+  tok_delta=""
+  tok_d=$(printf '%s\n' "$tok_old" | grep '^D ' | tail -n 1)
+  tok_pid=$(tail -c 262144 "$transcript" 2>/dev/null | grep -o '"promptId":"[A-Za-z0-9_-]*"' | tail -n 1 | cut -d'"' -f4)
+  if [ -n "$tok_total" ] && [ -n "$tok_pid" ]; then
+    d_p="" d_b="" d_l=""
+    [ -n "$tok_d" ] && read -r _ d_p d_b d_l <<EOT
+$tok_d
+EOT
+    case "$d_b$d_l" in ''|*[!0-9]*) d_p="" ;; esac
+    if [ -z "$d_p" ]; then d_base=$tok_total
+    elif [ "$d_p" != "$tok_pid" ]; then d_base=$d_l
+    else d_base=$d_b; fi
+    [ "$tok_total" -lt "$d_base" ] && d_base=$tok_total
+    tok_delta=$(( tok_total - d_base ))
+    tok_d="D $tok_pid $d_base $tok_total"
+  fi
+  [ -n "$tok_d" ] && tok_new="$tok_new${nl}$tok_d"
+  if [ "$tok_new" != "v1$tok_old" ]; then
+    { mkdir -p "$state_dir" && printf '%s\n' "$tok_new" > "$tok_state.$$" &&
+      mv -f "$tok_state.$$" "$tok_state"; } 2>/dev/null || rm -f "$tok_state.$$" 2>/dev/null
+  fi
+fi
 case "$start" in
   [0-9]*)
     now=$(date +%s)
@@ -978,7 +1109,7 @@ case "$start" in
     # both durations name days from a day. The cache age is green while every cache TTL is alive,
     # yellow once only a 1-hour one can be (from 5 minutes), red from 1 hour; after a response that
     # wrote the 5-minute TTL only, red from 5 minutes
-    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v tk="$tok_total" -v td="$tok_delta" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
     function fmtd(x) { return x >= 86400 ? sprintf("%dd %dh %dm", x / 86400, (x % 86400) / 3600, (x % 3600) / 60) : fmt(x) }
     BEGIN {
       d = now > s ? now - s : 0
@@ -987,6 +1118,16 @@ case "$start" in
         a = now > f[1] + 0 ? now - f[1] : 0
         col = (a >= 3600 || (f[2] == "5" && a >= 300) ? "31" : (a >= 300 ? "33" : "32"))
         printf "  %scache\033[0m \033[0;%sm%s\033[0m", g, col, fmtd(a)
+      }
+      if (tk ~ /^[0-9]+$/) {
+        u = sprintf("%d", tk)
+        while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+        printf "  %stotal\033[0m \033[0;37m%s\033[0m %stok\033[0m", g, u, g
+        if (td ~ /^[0-9]+$/ && td + 0 > 0) {
+          v = sprintf("%d", td)
+          while (v ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", v)
+          printf "  \033[0;37m+%s\033[0m %stok\033[0m", v, g
+        }
       }
       printf "\n"
     }'

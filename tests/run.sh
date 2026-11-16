@@ -111,6 +111,18 @@ for f in cases/*.json; do
   # jq --arg keeps the substituted path valid JSON whatever characters $TMPDIR has
   payload=$(jq -c --arg repo "$tmp/repo" --arg tmp "$tmp" \
     'walk(if . == "@repo@" then $repo elif type == "string" then gsub("@tmp@"; $tmp) else . end)' "$f") || exit 1
+  # cases/<name>.tok seeds the total tokens state of the case transcript: @fp@ is the cksum of its
+  # first 256 bytes, @line1@ the size of its first line
+  # the state of a transcript shared by cases must not carry over from the case before
+  rm -f "$config/statusline-state"/tok-*
+  if [ -f "cases/$name.tok" ]; then
+    tp=$(printf '%s' "$payload" | jq -r .transcript_path)
+    fp=$(head -c 256 "$tp" | cksum); fp=${fp%% *}
+    tk=$(printf '%s' "$tp" | cksum); tk=${tk%% *}
+    line1=$(head -n 1 "$tp" | wc -c | tr -d ' ')
+    mkdir -p "$config/statusline-state" &&
+      sed -e "s#@fp@#$fp#g" -e "s#@line1@#$line1#g" "cases/$name.tok" > "$config/statusline-state/tok-$tk" || exit 1
+  fi
   for ext in state repos rewind; do
     [ -f "cases/$name.$ext" ] || continue
     sid=$(printf '%s' "$payload" | jq -r .session_id)

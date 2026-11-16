@@ -977,7 +977,7 @@ start="" cache_at=""
 # State "tok-<cksum of the transcript path>": "v1", then per file "P <path>" and
 # "<fingerprint> <offset> <sum before last id> <last id> <last id tokens>". A file smaller than
 # its offset or with another first 256 bytes is read again; the part after the last complete line
-# is left for the next render; at most 64 MB per file and render, with no total until caught up.
+# is left for the next render; at most 8 MB per file and render, with no total until caught up.
 tok_total=""
 tok_scan() {
   # $1: file, state lines in $tok_old; sets tok_sum, appends the state to $tok_new, tok_ok=0 if behind
@@ -1010,10 +1010,12 @@ EOT
   if [ "$o_off" -lt "$tf_size" ]; then
     chunk="$state_dir/tok.$$.chunk"
     mkdir -p "$state_dir" 2>/dev/null
-    tail -c +$(( o_off + 1 )) "$tf" 2>/dev/null | head -c 67108864 > "$chunk" 2>/dev/null
+    # a killed render must not leave the chunk behind
+    trap 'rm -f "$chunk"' EXIT HUP INT TERM
+    tail -c +$(( o_off + 1 )) "$tf" 2>/dev/null | head -c 8388608 > "$chunk" 2>/dev/null
     cs=$(wc -c < "$chunk" 2>/dev/null | tr -d ' ')
     # a full chunk means more is waiting: no total until the next renders catch up
-    [ "${cs:-0}" -ge 67108864 ] && tok_ok=0
+    [ "${cs:-0}" -ge 8388608 ] && tok_ok=0
     # cut the chunk after its last complete line
     if [ "${cs:-0}" -gt 0 ] && [ -n "$(tail -c 1 "$chunk" | tr -d '\n')" ]; then
       cs=$(( cs - $(tail -n 1 "$chunk" | wc -c) ))
@@ -1029,6 +1031,7 @@ EOT
            else .b += .t | .i = (if $x.id == "" then "-" else $x.id end) | .t = $x.t end) |
         "\(.b) \(.i) \(.t)"' 2>/dev/null)
       rm -f "$chunk" 2>/dev/null
+      trap - EXIT HUP INT TERM
       case "$r" in
         [0-9]*" "*" "[0-9]*)
           set -- $r
@@ -1038,6 +1041,7 @@ EOT
       esac
     else
       rm -f "$chunk" 2>/dev/null
+      trap - EXIT HUP INT TERM
     fi
   fi
   tok_new="$tok_new${nl}P $tf${nl}$tf_fp $o_off $o_base $o_lid $o_lt"

@@ -113,6 +113,8 @@ for f in cases/*.json; do
     'walk(if . == "@repo@" then $repo elif type == "string" then gsub("@tmp@"; $tmp) else . end)' "$f") || exit 1
   # cases/<name>.tok seeds the total tokens state of the case transcript: @fp@ is the cksum of its
   # first 256 bytes, @line1@ the size of its first line
+  # the state of a transcript shared by cases must not carry over from the case before
+  rm -f "$config/statusline-state"/tok-*
   if [ -f "cases/$name.tok" ]; then
     tp=$(printf '%s' "$payload" | jq -r .transcript_path)
     fp=$(head -c 256 "$tp" | cksum); fp=${fp%% *}

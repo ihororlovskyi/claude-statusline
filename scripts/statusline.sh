@@ -991,7 +991,7 @@ tok_scan() {
   while IFS= read -r l; do
     case "$l" in
       "P "*) cur=${l#P } ;;
-      "") ;;
+      ""|"D "*) ;;
       *)
         if [ "$cur" = "$tf" ]; then
           set -- $l
@@ -1062,6 +1062,27 @@ if [ -n "$start" ] && [ -f "$transcript" ]; then
   done
   # a total of zero (no response yet, or only synthetic ones) shows nothing
   [ "$tok_ok" = 1 ] && [ "$tok_all" -gt 0 ] && tok_total=$tok_all
+  # growth since the current prompt started, as "+N tok" on the cntx line: the promptId of the last
+  # user entry marks the prompt, the state line "D <promptId> <base> <last>" holds the total when
+  # it started (a new promptId takes the previous last as base); no state yet, or a base above the
+  # total (a replaced transcript), shows nothing
+  tok_delta=""
+  tok_d=$(printf '%s\n' "$tok_old" | grep '^D ' | tail -n 1)
+  tok_pid=$(tail -c 262144 "$transcript" 2>/dev/null | grep -o '"promptId":"[A-Za-z0-9_-]*"' | tail -n 1 | cut -d'"' -f4)
+  if [ -n "$tok_total" ] && [ -n "$tok_pid" ]; then
+    d_p="" d_b="" d_l=""
+    [ -n "$tok_d" ] && read -r _ d_p d_b d_l <<EOT
+$tok_d
+EOT
+    case "$d_b$d_l" in ''|*[!0-9]*) d_p="" ;; esac
+    if [ -z "$d_p" ]; then d_base=$tok_total
+    elif [ "$d_p" != "$tok_pid" ]; then d_base=$d_l
+    else d_base=$d_b; fi
+    [ "$tok_total" -lt "$d_base" ] && d_base=$tok_total
+    tok_delta=$(( tok_total - d_base ))
+    tok_d="D $tok_pid $d_base $tok_total"
+  fi
+  [ -n "$tok_d" ] && tok_new="$tok_new${nl}$tok_d"
   if [ "$tok_new" != "v1$tok_old" ]; then
     { mkdir -p "$state_dir" && printf '%s\n' "$tok_new" > "$tok_state.$$" &&
       mv -f "$tok_state.$$" "$tok_state"; } 2>/dev/null || rm -f "$tok_state.$$" 2>/dev/null
@@ -1077,7 +1098,7 @@ case "$start" in
     # both durations name days from a day. The cache age is green while every cache TTL is alive,
     # yellow once only a 1-hour one can be (from 5 minutes), red from 1 hour; after a response that
     # wrote the 5-minute TTL only, red from 5 minutes
-    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v tk="$tok_total" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v tk="$tok_total" -v td="$tok_delta" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
     function fmtd(x) { return x >= 86400 ? sprintf("%dd %dh %dm", x / 86400, (x % 86400) / 3600, (x % 3600) / 60) : fmt(x) }
     BEGIN {
       d = now > s ? now - s : 0
@@ -1091,6 +1112,11 @@ case "$start" in
         u = sprintf("%d", tk)
         while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
         printf "  %stotal\033[0m \033[0;37m%s\033[0m %stok\033[0m", g, u, g
+        if (td ~ /^[0-9]+$/ && td + 0 > 0) {
+          v = sprintf("%d", td)
+          while (v ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", v)
+          printf "  \033[0;37m+%s\033[0m %stok\033[0m", v, g
+        }
       }
       printf "\n"
     }'

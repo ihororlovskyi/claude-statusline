@@ -1010,8 +1010,9 @@ EOT
   if [ "$o_off" -lt "$tf_size" ]; then
     chunk="$state_dir/tok.$$.chunk"
     mkdir -p "$state_dir" 2>/dev/null
-    # a killed render must not leave the chunk behind
-    trap 'rm -f "$chunk"' EXIT HUP INT TERM
+    # a killed render must not leave the chunk behind (the signal trap also stops the render)
+    trap 'rm -f "$chunk"' EXIT
+    trap 'rm -f "$chunk"; exit 1' HUP INT TERM
     tail -c +$(( o_off + 1 )) "$tf" 2>/dev/null | head -c 8388608 > "$chunk" 2>/dev/null
     cs=$(wc -c < "$chunk" 2>/dev/null | tr -d ' ')
     # a full chunk means more is waiting: no total until the next renders catch up

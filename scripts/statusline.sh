@@ -416,7 +416,7 @@ if [ -f "$transcript" ]; then
   fi
   [ -n "$scan" ] && { marks=${scan%%"$nl"*}; turns=${scan#*"$nl"}; }
 fi
-# "13 prompts 8·4·1": the total, then the prompts before each compaction and since the last one;
+# "13 prompts 1·4·8": the total, then the prompts since the last compaction and before each one;
 # no prompts show nothing, but "0 prompts" once /rewind dropped them all
 prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   p = gsub(/P/, "P", m)
@@ -437,7 +437,7 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   }
   printf "\033[0m"
 }')
-# line 1: "<model> <effort> · thinking:on · 13 prompts  8·4·1", thinking:no when the payload has no
+# line 1: "<model> <effort> · thinking:on · 13 prompts  1·4·8", thinking:no when the payload has no
 # thinking field. The model is left out when unknown, the dot goes with it; the prompt part
 # is left out with its dot when there are no prompts
 case "$thinking_in" in
@@ -471,14 +471,14 @@ done <<EOF
 $roots
 EOF
 
-# line 2: thinking + skills and memory estimates + prompts
+# the skills and memory estimates line
 # memory: the files Claude Code loads into every turn (the "Memory files" of /context), estimated
 # like the skills. Walking from the project dir up to /: CLAUDE.md, .claude/CLAUDE.md and
 # CLAUDE.local.md (AGENTS.md and .claude/AGENTS.md instead when none of them exists and the
 # built-in agents-md plugin is on); the user and managed CLAUDE.md; project and user .claude/rules
 # without paths: frontmatter; @path imports of all of them, up to four hops; MEMORY.md of auto
 # memory (the first 200 lines, at most 25,000 bytes). Checked against /context of 2.1.316 in
-# November 2026. Parsing every file each render would cost more than the rest of line 2, so the
+# November 2026. Parsing every file each render would cost more than the rest of that line, so the
 # total is kept in statusline-state/mem-<project dir> with "<mtime> <size> <path>" of every file
 # it looked at (missing ones too, so a new file shows up) and is recounted when one stat changes
 # sets st; BSD stat first: GNU stat takes -f for file system info, which starts with no mtime;
@@ -1073,7 +1073,7 @@ if [ -n "$start" ] && [ -f "$transcript" ]; then
   done
   # a total of zero (no response yet, or only synthetic ones) shows nothing
   [ "$tok_ok" = 1 ] && [ "$tok_all" -gt 0 ] && tok_total=$tok_all
-  # growth since the current prompt started, as "+N tok" on the cntx line: the promptId of the last
+  # growth since the current prompt started, as "+N tok" after the total on the last line: the promptId of the last
   # user entry marks the prompt, the state line "D <promptId> <base> <last>" holds the total when
   # it started (a new promptId takes the previous last as base); no state yet, or a base above the
   # total (a replaced transcript), shows nothing

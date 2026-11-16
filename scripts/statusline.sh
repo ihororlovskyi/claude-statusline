@@ -88,15 +88,17 @@ awk_fmt='
     return sprintf("%ds", x)
   }'
 
-# line 1: model + effort level; models without effort show nothing after the name
+# line 1: model + effort level, a gray dot and the thinking mode; models without effort show
+# nothing after the name
 model_str=""
-[ -n "$model" ] && model_str=$(printf "  $mag%s\033[0m" "$model")
-[ -n "$effort_val" ] && model_str=$(printf "%s $mag%s\033[0m" "$model_str" "$effort_val")
+[ -n "$model" ] && model_str=$(printf "$mag%s\033[0m" "$model")
+[ -n "$effort_val" ] && model_str=$(printf "%s${model_str:+ }$mag%s\033[0m" "$model_str" "$effort_val")
 # session cost: on the sess line, else on the used line, else on the cntx line, else (no context
-# data) on line 1
+# data) at the end of line 1
+cost_line1=""
 cost_str=$(LC_ALL=C awk -v c="${cost_usd:-0}" -v col="$cyan" 'BEGIN { if (c + 0 > 0) printf "  %s$%.2f\033[0m", col, c }')
 if [ -z "$used" ] && [ -n "$cost_usd" ]; then
-  model_str="$model_str$cost_str"
+  cost_line1=$cost_str
 fi
 nl='
 '
@@ -335,9 +337,20 @@ EOF
   fi
 fi
 
-# the PR follows the branch it belongs to; a gray dot then separates it from the model
-[ -n "$pr_str" ] && [ -n "$model_str" ] && model_str=$(printf " ${gray}·\033[0m %s" "${model_str#  }")
-printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s%s\n" "$dir" "$git_info" "$pr_str" "$model_str"
+# line 1: "<model> <effort> · thnk:on", thnk:no when the payload has no thinking field. The model
+# is left out when unknown, the dot goes with it
+case "$thinking_in" in
+  true)  think_str=$(printf "${gray}thnk:\033[0m${cyan}on\033[0m") ;;
+  false) think_str=$(printf "${gray}thnk:off\033[0m") ;;
+  *)     think_str=$(printf "${gray}thnk:no\033[0m") ;;
+esac
+if [ -n "$model_str" ]; then
+  printf "%s ${gray}·\033[0m %s%s\n" "$model_str" "$think_str" "$cost_line1"
+else
+  printf "%s%s\n" "$think_str" "${cost_line1#  }"
+fi
+# line 2: the project, branch and PR
+printf "\033[1;32m➜\033[0m  $cyan%s\033[0m%s%s\n" "$dir" "$git_info" "$pr_str"
 
 # one line per other repo the session edited
 while IFS= read -r root; do
@@ -653,11 +666,6 @@ est_str=""
   in_desc && /^[ \t]/ { len += length($0); next }
   { in_desc = 0 }
   END { flush(); est("skll", total, s); est("mem", mem, s) }' "$@" /dev/null 2>/dev/null)
-case "$thinking_in" in
-  true)  think_str=$(printf "${gray}thnk:\033[0m${cyan}on\033[0m") ;;
-  false) think_str=$(printf "${gray}thnk:off\033[0m") ;;
-  *)     think_str=$(printf "${gray}thnk:no\033[0m") ;;
-esac
 
 # prompts in the session: P per prompt, C per compaction, in transcript order. Tool results,
 # meta and command entries (<command-name>, <bash-input>, <task-notification>), compact
@@ -757,7 +765,13 @@ prompts_str=$(LC_ALL=C awk -v m="$marks" -v g="$gray" -v r="${leaf#-}" 'BEGIN {
   }
   printf "\033[0m"
 }')
-printf "%s%s${gray}%s\033[0m%s\n" "$p6" "$think_str" "$est_str" "$prompts_str"
+# skll:/mem: estimates and prompts; the first one loses its two leading spaces, nothing to show
+# draws no line
+if [ -n "$est_str" ]; then
+  printf "%s${gray}%s\033[0m%s\n" "$p6" "${est_str#  }" "$prompts_str"
+elif [ -n "$prompts_str" ]; then
+  printf "%s%s\n" "$p6" "${prompts_str#  }"
+fi
 
 if [ -n "$used" ]; then
   # current_usage gives exact tokens; older payloads only have the percentage

@@ -1,4 +1,5 @@
-[1;32m➜[0m  [0;36mproject[0m  [0;35mHaiku 4.5[0m
-      [0;90mthnk:off[0m[0;90m  skll: ~200 tok ~0.1%[0m
+[0;35mHaiku 4.5[0m [0;90m·[0m [0;90mthnk:off[0m
+[1;32m➜[0m  [0;36mproject[0m
+      [0;90mskll: ~200 tok ~0.1%[0m
       [0;90mcntx:[0m[0;31m████████░░[0m [0;37m80%[0m  [0;31m160,000[0m [0;90mtok /200k[0m  [0;36m$1.50[0m
       [0;90mrest: <date-dependent>

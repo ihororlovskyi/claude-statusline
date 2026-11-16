@@ -968,6 +968,101 @@ start="" cache_at=""
   (.timestamp | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? | floor) as $at |
   (.message.usage.cache_creation | if type == "object" then . else {} end) as $w |
   "\($at) \(if ($w.ephemeral_5m_input_tokens // 0) > 0 and ($w.ephemeral_1h_input_tokens // 0) == 0 then 5 else "-" end)"' 2>/dev/null)
+# total tokens of the whole session, counted as the Auto Reviewer's "Used:" footer counts a run:
+# input + output + cache creation + cache read of every response, summed over the main transcript
+# and the subagent ones next to it. The payload has no such field (its context_window totals are
+# input/output only, no cache tokens), so the transcripts are read incrementally. A response
+# written as several records (one per content block, same message id, same usage) counts once:
+# only the last id is kept in the state, as the records of one response are adjacent.
+# State "tok-<cksum of the transcript path>": "v1", then per file "P <path>" and
+# "<fingerprint> <offset> <sum before last id> <last id> <last id tokens>". A file smaller than
+# its offset or with another first 256 bytes is read again; the part after the last complete line
+# is left for the next render; at most 64 MB per file and render, with no total until caught up.
+tok_total=""
+tok_scan() {
+  # $1: file, state lines in $tok_old; sets tok_sum, appends the state to $tok_new, tok_ok=0 if behind
+  tok_sum=0
+  tf=$1
+  tf_size=$(wc -c < "$tf" 2>/dev/null | tr -d ' ')
+  case "$tf_size" in ''|*[!0-9]*) tok_ok=0; return ;; esac
+  tf_fp=$(head -c 256 "$tf" 2>/dev/null | cksum)
+  tf_fp=${tf_fp%% *}
+  o_fp="" o_off=0 o_base=0 o_lid="-" o_lt=0 cur="" hit=""
+  while IFS= read -r l; do
+    case "$l" in
+      "P "*) cur=${l#P } ;;
+      "") ;;
+      *)
+        if [ "$cur" = "$tf" ]; then
+          set -- $l
+          o_fp=$1 o_off=$2 o_base=$3 o_lid=$4 o_lt=$5
+          hit=1
+          break
+        fi ;;
+    esac
+  done <<EOT
+$tok_old
+EOT
+  case "$o_off$o_base$o_lt" in ''|*[!0-9]*) hit="" ;; esac
+  if [ -z "$hit" ] || [ "$o_fp" != "$tf_fp" ] || [ "$o_off" -gt "$tf_size" ]; then
+    o_off=0 o_base=0 o_lid="-" o_lt=0
+  fi
+  if [ "$o_off" -lt "$tf_size" ]; then
+    chunk="$state_dir/tok.$$.chunk"
+    mkdir -p "$state_dir" 2>/dev/null
+    tail -c +$(( o_off + 1 )) "$tf" 2>/dev/null | head -c 67108864 > "$chunk" 2>/dev/null
+    cs=$(wc -c < "$chunk" 2>/dev/null | tr -d ' ')
+    # a full chunk means more is waiting: no total until the next renders catch up
+    [ "${cs:-0}" -ge 67108864 ] && tok_ok=0
+    # cut the chunk after its last complete line
+    if [ "${cs:-0}" -gt 0 ] && [ -n "$(tail -c 1 "$chunk" | tr -d '\n')" ]; then
+      cs=$(( cs - $(tail -n 1 "$chunk" | wc -c) ))
+    fi
+    if [ "${cs:-0}" -gt 0 ]; then
+      r=$(head -c "$cs" "$chunk" | grep -a '"type":"assistant"' | jq -nrR --argjson b "$o_base" --arg i "$o_lid" --argjson t "$o_lt" '
+        def n: if type == "number" and . >= 0 then . else 0 end;
+        reduce (inputs | fromjson? | select(type == "object" and .type == "assistant" and (.message | type == "object") and .message.model != "<synthetic>" and (.message.usage | type == "object")) |
+          {id: ((.message.id // .requestId // .uuid) | if type == "string" and test("^[A-Za-z0-9_-]+$") then . else "" end),
+           t: (.message.usage | (.input_tokens | n) + (.output_tokens | n) + (.cache_creation_input_tokens | n) + (.cache_read_input_tokens | n))}) as $x
+          ({b: $b, i: $i, t: $t};
+           if $x.id != "" and $x.id == .i then .t = ([.t, $x.t] | max)
+           else .b += .t | .i = (if $x.id == "" then "-" else $x.id end) | .t = $x.t end) |
+        "\(.b) \(.i) \(.t)"' 2>/dev/null)
+      rm -f "$chunk" 2>/dev/null
+      case "$r" in
+        [0-9]*" "*" "[0-9]*)
+          set -- $r
+          o_base=$1 o_lid=$2 o_lt=$3
+          o_off=$(( o_off + cs )) ;;
+        *) tok_ok=0; return ;;
+      esac
+    else
+      rm -f "$chunk" 2>/dev/null
+    fi
+  fi
+  tok_new="$tok_new${nl}P $tf${nl}$tf_fp $o_off $o_base $o_lid $o_lt"
+  tok_sum=$(( o_base + o_lt ))
+}
+if [ -n "$start" ] && [ -f "$transcript" ]; then
+  tok_key=$(printf '%s' "$transcript" | cksum)
+  tok_state="$state_dir/tok-${tok_key%% *}"
+  tok_old="" tok_new="v1" tok_ok=1 tok_all=0
+  if [ -f "$tok_state" ]; then
+    tok_old=$(cat "$tok_state" 2>/dev/null)
+    case "$tok_old" in "v1"*) tok_old=${tok_old#v1} ;; *) tok_old="" ;; esac
+  fi
+  for tf in "$transcript" "${transcript%.jsonl}"/subagents/agent-*.jsonl; do
+    [ -f "$tf" ] || continue
+    tok_scan "$tf"
+    tok_all=$(( tok_all + tok_sum ))
+  done
+  # a total of zero (no response yet, or only synthetic ones) shows nothing
+  [ "$tok_ok" = 1 ] && [ "$tok_all" -gt 0 ] && tok_total=$tok_all
+  if [ "$tok_new" != "v1$tok_old" ]; then
+    { mkdir -p "$state_dir" && printf '%s\n' "$tok_new" > "$tok_state.$$" &&
+      mv -f "$tok_state.$$" "$tok_state"; } 2>/dev/null || rm -f "$tok_state.$$" 2>/dev/null
+  fi
+fi
 case "$start" in
   [0-9]*)
     now=$(date +%s)
@@ -978,7 +1073,7 @@ case "$start" in
     # both durations name days from a day. The cache age is green while every cache TTL is alive,
     # yellow once only a 1-hour one can be (from 5 minutes), red from 1 hour; after a response that
     # wrote the 5-minute TTL only, red from 5 minutes
-    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
+    LC_ALL=C awk -v s="$start" -v at="$started" -v c="$cache_at" -v tk="$tok_total" -v now="$now" -v g="$gray" -v p6="$p6" "$awk_fmt"'
     function fmtd(x) { return x >= 86400 ? sprintf("%dd %dh %dm", x / 86400, (x % 86400) / 3600, (x % 3600) / 60) : fmt(x) }
     BEGIN {
       d = now > s ? now - s : 0
@@ -987,6 +1082,11 @@ case "$start" in
         a = now > f[1] + 0 ? now - f[1] : 0
         col = (a >= 3600 || (f[2] == "5" && a >= 300) ? "31" : (a >= 300 ? "33" : "32"))
         printf "  %scache\033[0m \033[0;%sm%s\033[0m", g, col, fmtd(a)
+      }
+      if (tk ~ /^[0-9]+$/) {
+        u = sprintf("%d", tk)
+        while (u ~ /[0-9][0-9][0-9][0-9]/) sub(/[0-9][0-9][0-9]($|,)/, ",&", u)
+        printf "  %stotal\033[0m \033[0;37m%s\033[0m %stok\033[0m", g, u, g
       }
       printf "\n"
     }'
